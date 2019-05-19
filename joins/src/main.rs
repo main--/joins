@@ -68,22 +68,28 @@ equi_join! { JoinWrapperLeft(Tuple => a) == JoinWrapperRight(Tuple => b) }
 
 
 // additional constraints (PartialCmp, Hash, Eq) as needed by the join implementation
+/*
 trait Join<Left, Right> : Stream<Item=(Left::Item, Right::Item), Error=Left::Error>
     where Left: Stream,
           Right: Stream<Error=Left::Error> {
     fn build(left: Left, right: Right) -> Self;
-}
+}*/
 
-struct OrderedMergeJoin<L: Stream, R: Stream> {
+struct OrderedMergeJoin<L: Stream, R: Stream, KL, KR> {
     left: stream::Peekable<L>,
     right: stream::Peekable<R>,
+    key_left: KL,
+    key_right: KR,
 }
 
-impl<L, R> Stream for OrderedMergeJoin<L, R>
+impl<L, R, KL, KR, KKL, KKR> Stream for OrderedMergeJoin<L, R, KL, KR>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          L::Item: Clone + PartialOrd<R::Item>,
-          R::Item: Clone {
+          L::Item: Clone,
+          R::Item: Clone,
+          KL: for<'a> Fn(&'a L::Item) -> KKL,
+          KR: for<'a> Fn(&'a R::Item) -> KKR,
+          KKL: PartialOrd<KKR> {
     type Item = (L::Item, R::Item);
     type Error = L::Error;
 
@@ -95,8 +101,10 @@ impl<L, R> Stream for OrderedMergeJoin<L, R>
                 let right = try_ready!(self.right.peek());
                 match (left, right) {
                     (Some(l), Some(r)) => {
-                        ret = if l == r { Some((l.clone(), r.clone())) } else { None };
-                        l < r
+                        let kl = (self.key_left)(l);
+                        let kr = (self.key_right)(r);
+                        ret = if kl == kr { Some((l.clone(), r.clone())) } else { None };
+                        kl < kr
                     }
                     _ => break,
                 }
@@ -117,18 +125,18 @@ impl<L, R> Stream for OrderedMergeJoin<L, R>
 }
 
 
-impl<L, R> OrderedMergeJoin<L, R>
+impl<L, R, KL, KR> OrderedMergeJoin<L, R, KL, KR>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          L::Item: Clone + PartialOrd<R::Item>,
+          L::Item: Clone,
           R::Item: Clone {
-    fn build(left: L, right: R) -> Self {
-        OrderedMergeJoin { left: left.peekable(), right: right.peekable() }
+    fn build(left: L, right: R, key_left: KL, key_right: KR) -> Self {
+        OrderedMergeJoin { left: left.peekable(), right: right.peekable(), key_left, key_right }
     }
 }
 
 
-
+/*
 enum SortMergeJoin<L: Stream, R: Stream> {
     InputPhase {
         left: stream::Fuse<L>,
@@ -184,7 +192,7 @@ impl<L, R> Stream for SortMergeJoin<L, R>
     }
 }
 
-impl<L, R> Join<L, R> for SortMergeJoin<L, R>
+impl<L, R> SortMergeJoin<L, R>
     where L: Stream,
           R: Stream<Error=L::Error>,
           L::Item: Clone + PartialOrd<R::Item> + Ord,
@@ -193,6 +201,7 @@ impl<L, R> Join<L, R> for SortMergeJoin<L, R>
         SortMergeJoin::InputPhase { left: left.fuse(), right: right.fuse(), left_buf: Vec::new(), right_buf: Vec::new() }
     }
 }
+*/
 
 //struct SymmetricHashJoin<L: Stream, R: Stream> {}
 
@@ -209,7 +218,7 @@ fn bencher() {
     //let left = bench_source(vec![1,3,4,7,18], &tuples_read);
     //let right = bench_source(vec![0, 1, 3, 3,7,42,45], &tuples_read);
 
-    let join = SortMergeJoin::build(left.map(JoinWrapperLeft), right.map(JoinWrapperRight));
+    let join = OrderedMergeJoin::build(left, right, |x: &Tuple| x.a, |x: &Tuple| x.b);
 
     let mut res = join.and_then(|x| {
         Ok((x, tuples_read.get()))
