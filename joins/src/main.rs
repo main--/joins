@@ -418,11 +418,11 @@ fn bench_join() -> BenchJoin {
 existential type BenchSource<T>: Stream<Item=T, Error=()>;
 existential type BenchJoin: HashJoinDefinition<Left=Tuple, Right=Tuple, Output=(Tuple, Tuple)> + OrdJoinDefinition;
 
-fn bencher<J>() where J: Join<BenchSource<Tuple>, BenchSource<Tuple>, BenchJoin> {
+fn bencher<J>(data_left: Vec<i32>, data_right: Vec<i32>) where J: Join<BenchSource<Tuple>, BenchSource<Tuple>, BenchJoin> {
     let tuples_read = Rc::new(Cell::new(0));
 
-    let left = bench_source(vec![1,3,3,3,3,3,3,3,3,4,7,18].into_iter().map(|x| Tuple { a: x, b: 0 }).collect(), &tuples_read);
-    let right = bench_source(vec![0, 1, 3, 3,3,7,42,45].into_iter().map(|x| Tuple { a: 0, b: x }).collect(), &tuples_read);
+    let left = bench_source(data_left.into_iter().map(|x| Tuple { a: x, b: 0 }).collect(), &tuples_read);
+    let right = bench_source(data_right.into_iter().map(|x| Tuple { a: 0, b: x }).collect(), &tuples_read);
 
     let join = J::build(left, right, bench_join());
 
@@ -441,8 +441,10 @@ fn bencher<J>() where J: Join<BenchSource<Tuple>, BenchSource<Tuple>, BenchJoin>
 }
 
 fn main() {
-    bencher::<OrderedMergeJoin<_, _, _>>();
-    bencher::<SortMergeJoin<_, _, _>>();
-    bencher::<SimpleHashJoin<_, _, _>>();
-    bencher::<SymmetricHashJoin<_, _, _>>();
+    let left_sorted = vec![1,3,3,3,3,3,3,3,3,4,7,18];
+    let right_sorted = vec![0, 1, 3, 3,3,7,42,45];
+    bencher::<OrderedMergeJoin<_, _, _>>(left_sorted.clone(), right_sorted.clone());
+    bencher::<SortMergeJoin<_, _, _>>(left_sorted.clone(), right_sorted.clone());
+    bencher::<SimpleHashJoin<_, _, _>>(left_sorted.clone(), right_sorted.clone());
+    bencher::<SymmetricHashJoin<_, _, _>>(left_sorted.clone(), right_sorted.clone());
 }
