@@ -1,13 +1,12 @@
-use futures::Future;
+use futures::{Future, Stream, Poll, try_ready, Async, stream};
 
 // TODO: futures
 //trait TupleSource {
 //    fn next(&mut self) -> Option<Option<T>>; // None = not ready; Some(None) = end
 //}
 
-trait TupleSource {
-    type Item;
-    fn next(&mut self) -> Option<Self::Item>;
+trait TupleSource: Stream {
+    fn restart(&mut self);
 }
 
 
@@ -41,10 +40,10 @@ impl<F, L, R, O> JoinPredicate<L, R> for F where F: Fn(L, R) -> Option<O> {
 
 
 
-trait Join<Predicate, Left, Right> : TupleSource<Item=Predicate::Output>
+trait Join<Predicate, Left, Right> : TupleSource<Item=Predicate::Output, Error=Left::Error>
     where Predicate: JoinPredicate<Left::Item, Right::Item>,
           Left: TupleSource,
-          Right: TupleSource {
+          Right: TupleSource<Error=Left::Error> {
     fn build(predicate: Predicate, left: Left, right: Right) -> Self;
 }
 
@@ -56,91 +55,91 @@ struct NestedLoopJoin<P, L: TupleSource, R> {
     right: R,
 }
 
-impl<P, L, R> TupleSource for NestedLoopJoin<P, L, R>
+impl<P, L, R> Stream for NestedLoopJoin<P, L, R>
     where P: JoinPredicate<L::Item, R::Item>,
           L: TupleSource,
-          R: TupleSource,
+          R: TupleSource<Error=L::Error>,
           L::Item: Clone {
     type Item = P::Output;
-    fn next(&mut self) -> Option<Self::Item> {
+    type Error = L::Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        if self.current_left.is_none() {
+            self.current_left = try_ready!(self.left.poll());
+        }
         while let Some(left) = self.current_left.clone() {
-            while let Some(right) = self.right.next() {
+            while let Some(right) = try_ready!(self.right.poll()) {
                 if let Some(result) = self.predicate.call(left.clone(), right) {
-                    return Some(result);
+                    return Ok(Async::Ready(Some(result)));
                 }
             }
 
-            self.current_left = self.left.next();
+            self.right.restart();
+            self.current_left = None;
+            self.current_left = try_ready!(self.left.poll());
         }
 
-        None
+        Ok(Async::Ready(None))
     }
 }
 
-impl<P, L, R> Join<P, L, R> for NestedLoopJoin<P, L, R>
+impl<P, L, R> TupleSource for NestedLoopJoin<P, L, R>
     where P: JoinPredicate<L::Item, R::Item>,
           L: TupleSource,
-          R: TupleSource,
+          R: TupleSource<Error=L::Error>,
           L::Item: Clone {
-    fn build(predicate: P, mut left: L, right: R) -> Self {
-        NestedLoopJoin { current_left: left.next(), predicate, left, right }
-    }
-}
-
-/*impl<P, L, R, Output> TupleSource for NestedLoopJoin<P, L, R>
-    where L: TupleSource, R: TupleSource, P: Fn(L::Item, R::Item) -> Option<Output> {*/
-
-/*impl<P, L, R> TupleSource for NestedLoopJoin<P, L, R>
-    where L: TupleSource<Item=P::, R: TupleSource, P: Fn {
-    type Item = Output;
-    fn next(&mut self) -> Option<Option<Output>> {
+    fn restart(&mut self) {
         unimplemented!();
     }
 }
 
 impl<P, L, R> Join<P, L, R> for NestedLoopJoin<P, L, R>
-    where L: TupleSource, R: TupleSource, P: Fn(L::Item, R::Item) -> Option<Self::Item> {
-}*/
+    where P: JoinPredicate<L::Item, R::Item>,
+          L: TupleSource,
+          R: TupleSource<Error=L::Error>,
+          L::Item: Clone {
+    fn build(predicate: P, mut left: L, right: R) -> Self {
+        NestedLoopJoin { current_left: None, predicate, left, right }
+    }
+}
+
 
 struct MemorySource<T> {
     vec: Vec<T>,
     index: usize,
 }
 
-impl<T: Clone> TupleSource for MemorySource<T> {
+impl<T: Clone> Stream for MemorySource<T> {
     type Item = T;
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.vec.len() {
-            self.index = 0;
+    type Error = ();
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, ()> {
+        Ok(Async::Ready(if self.index >= self.vec.len() {
             None
         } else {
             let element = self.vec[self.index].clone();
             self.index += 1;
             Some(element)
-        }
+        }))
     }
 }
-
-/*
-struct JP;
-
-impl JoinPredicate<i32, i32> for JP {
-    type Output = i32;
-    fn call(&self, l: i32, r: i32) -> Option<i32> {
-    //println!("{}=={}", l, r);
-        if l == r { Some(l) } else { None }
+impl<T: Clone> TupleSource for MemorySource<T> {
+    fn restart(&mut self) {
+        self.index = 0;
     }
 }
-*/
 
 fn main() {
     let left = MemorySource { vec: vec![1,3,18,4,7], index: 0 };
     let right = MemorySource { vec: vec![42, 1, 45, 3, 0, 3,7], index: 0 };
 
+    let asdf = MemorySource { vec: vec![0,1,2,3,4,5,6], index: 0 };
+
     //let mut join = NestedLoopJoin::build(JP, left, right);
     //let mut join = NestedLoopJoin::build(|x, y| if x == y { Some(x) } else { None }, left, right);
-    let mut join = NestedLoopJoin::build(EquiJoin::make(|&x, &y| x == (y+1)), left, right);
-    while let Some(x) = join.next() {
+    let mut join = NestedLoopJoin::build(EquiJoin::make(|&x, &y| x == (y+0)), left, right);
+    let mut join = NestedLoopJoin::build(EquiJoin::make(|(x, _), y| x == y), join, asdf);
+    while let Async::Ready(Some(x)) = join.poll().unwrap() {
         println!("{:?}", x);
     }
 }
