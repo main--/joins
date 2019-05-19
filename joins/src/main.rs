@@ -1,9 +1,12 @@
+use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
+use std::fmt::Debug;
 use std::collections::hash_map::DefaultHasher;
 use std::rc::Rc;
 use std::cmp::Ordering;
 use std::cell::Cell;
 use futures::{Future, Stream, Poll, try_ready, Async, stream};
+use multimap::MultiMap;
 
 trait JoinDefinition {
     type Left;
@@ -112,13 +115,16 @@ struct OrderedMergeJoin<L: Stream, R: Stream, D> {
     left: stream::Peekable<L>,
     right: stream::Peekable<R>,
     definition: D,
+    eq_buffer: Vec<L::Item>,
+    eq_cursor: usize,
+    replay_mode: bool,
 }
 
 impl<L, R, D> Stream for OrderedMergeJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          L::Item: Clone,
-          R::Item: Clone,
+          L::Item: Clone + Debug,
+          R::Item: Clone + Debug,
           D: OrdJoinDefinition<Left=L::Item, Right=R::Item> {
     type Item = D::Output;
     type Error = L::Error;
@@ -126,25 +132,62 @@ impl<L, R, D> Stream for OrderedMergeJoin<L, R, D>
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         let mut ret = None;
         while ret.is_none() {
-            let poll_left = {
-                let left = try_ready!(self.left.peek());
+            let order = {
+                let left = if self.replay_mode {
+                    let x = &self.eq_buffer[self.eq_cursor];
+                    self.eq_cursor += 1;
+                    Some(x)
+                } else {
+                    try_ready!(self.left.peek())
+                };
                 let right = try_ready!(self.right.peek());
+                //println!("matching {:?} vs {:?}", left, right);
                 match (left, right) {
                     (Some(l), Some(r)) => {
                         ret = self.definition.eq(l, r);
-                        self.definition.cmp(l, r) == Some(Ordering::Less)
+                        self.definition.cmp(l, r).unwrap()
                     }
                     _ => break,
                 }
             };
 
-            if poll_left {
-                if let Async::NotReady = self.left.poll()? {
-                    unreachable!();
+            match order {
+                Ordering::Less => {
+                    if self.replay_mode {
+                        self.eq_buffer.clear();
+                        self.eq_cursor = 0;
+                        self.replay_mode = false;
+                    } else {
+                        if let Async::NotReady = self.left.poll()? {
+                            unreachable!();
+                        }
+                    }
                 }
-            } else {
-                if let Async::NotReady = self.right.poll()? {
-                    unreachable!();
+                Ordering::Greater => {
+                    assert!(!self.replay_mode);
+                    if !self.eq_buffer.is_empty() {
+                        println!("entering replay mode with {:?}", self.eq_buffer);
+                        self.replay_mode = true;
+                    }
+
+                    if let Async::NotReady = self.right.poll()? {
+                        unreachable!();
+                    }
+                }
+                Ordering::Equal => {
+                    if self.replay_mode {
+                        if self.eq_cursor >= self.eq_buffer.len() {
+                            if let Async::NotReady = self.right.poll()? {
+                                unreachable!();
+                            }
+                            self.eq_cursor = 0;
+                        }
+                    } else {
+                        match self.left.poll()? {
+                            Async::Ready(Some(left)) => self.eq_buffer.push(left),
+                            _ => unreachable!(),
+                        }
+                    }
                 }
             }
         }
@@ -159,7 +202,7 @@ impl<L, R, D> OrderedMergeJoin<L, R, D>
           L::Item: Clone,
           R::Item: Clone {
     fn build(left: L, right: R, definition: D) -> Self {
-        OrderedMergeJoin { left: left.peekable(), right: right.peekable(), definition }
+        OrderedMergeJoin { left: left.peekable(), right: right.peekable(), definition, eq_buffer: Vec::new(), eq_cursor: 0, replay_mode: false }
     }
 }
 
@@ -179,8 +222,8 @@ enum SortMergeJoin<L: Stream, R: Stream, D> {
 impl<L, R, D> Stream for SortMergeJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          L::Item: Clone,
-          R::Item: Clone,
+          L::Item: Clone + Debug,
+          R::Item: Clone + Debug,
           D: OrdJoinDefinition<Left=L::Item, Right=R::Item> {
     type Item = D::Output;
     type Error = L::Error;
@@ -232,22 +275,93 @@ impl<L, R, D> SortMergeJoin<L, R, D>
     }
 }
 
-//struct SymmetricHashJoin<L: Stream, R: Stream> {}
+struct SimpleHashJoin<L: Stream, R: Stream, D: JoinDefinition> {
+    definition: D,
+    left: stream::Fuse<L>,
+    right: R,
+    table: MultiMap<u64, L::Item>,
+    output_buffer: VecDeque<D::Output>,
+}
+impl<L, R, D> Stream for SimpleHashJoin<L, R, D>
+    where L: Stream,
+          R: Stream<Error=L::Error>,
+          L::Item: Clone,
+          R::Item: Clone,
+          D: HashJoinDefinition<Left=L::Item, Right=R::Item> {
+    type Item = D::Output;
+    type Error = L::Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        // build phase
+        while let Some(left) = try_ready!(self.left.poll()) {
+            self.table.insert(self.definition.hash_left(&left), left);
+        }
+
+        // probe phase
+
+
+        // carry-over buffer
+        while let Some(buffered) = self.output_buffer.pop_front() {
+            return Ok(Async::Ready(Some(buffered)));
+        }
+        // actual probing (spills excess candidates to buffer)
+        while let Some(right) = try_ready!(self.right.poll()) {
+            for candidate in self.table.get_vec(&self.definition.hash_right(&right)).into_iter().flatten() {
+                if let Some(x) = self.definition.eq(candidate, &right) {
+                    self.output_buffer.push_back(x);
+                }
+            }
+            if let Some(buffered) = self.output_buffer.pop_front() {
+                return Ok(Async::Ready(Some(buffered)));
+            }
+        }
+
+        // done
+        Ok(Async::Ready(None))
+    }
+}
+impl<L, R, D> SimpleHashJoin<L, R, D>
+    where L: Stream,
+          R: Stream<Error=L::Error>,
+          L::Item: Clone,
+          R::Item: Clone,
+          D: HashJoinDefinition<Left=L::Item, Right=R::Item> {
+    fn build(left: L, right: R, definition: D) -> Self {
+        SimpleHashJoin { definition, left: left.fuse(), right, table: MultiMap::new(), output_buffer: VecDeque::new() }
+    }
+}
 
 fn bench_source<T>(data: Vec<T>, counter: &Rc<Cell<usize>>) -> impl Stream<Item=T, Error=()> {
     let rc = Rc::clone(&counter);
     stream::iter_ok::<_, ()>(data).inspect(move |_| { rc.set(rc.get() + 1); })
 }
 
+
+/*
+struct ItemCounter<T> {
+    inner: T,
+    counter: Rc<Cell<usize>>,
+}
+impl<T> Stream for ItemCounter<T> where T: Stream {
+    type Item = T::Item;
+    type Error = T::Error;
+    fn poll(&mut self) -> Poll<Option<T::Item>, T::Error> {
+        let x = try_ready!(self.inner.poll());
+        self.counter.set(self.counter.get() + 1);
+        Ok(Async::Ready(x))
+    }
+}
+*/
+
 fn bencher() {
     let tuples_read = Rc::new(Cell::new(0));
 
-    let left = bench_source(vec![1,3,4,7,18].into_iter().map(|x| Tuple { a: x, b: 0 }).collect(), &tuples_read);
-    let right = bench_source(vec![0, 1, 3, 3,7,42,45].into_iter().map(|x| Tuple { a: 0, b: x }).collect(), &tuples_read);
+    let left = bench_source(vec![1,3,3,3,3,3,3,3,3,4,7,18].into_iter().map(|x| Tuple { a: x, b: 0 }).collect(), &tuples_read);
+    let right = bench_source(vec![0, 1, 3, 3,3,7,42,45].into_iter().map(|x| Tuple { a: 0, b: x }).collect(), &tuples_read);
     //let left = bench_source(vec![1,3,4,7,18], &tuples_read);
     //let right = bench_source(vec![0, 1, 3, 3,7,42,45], &tuples_read);
 
-    let join = SortMergeJoin::build(left, right, EquiJoin::new(|x: &Tuple| x.a, |x: &Tuple| x.b));
+    let join = OrderedMergeJoin::build(left, right, EquiJoin::new(|x: &Tuple| (x.a, x.b), |x: &Tuple| (x.b, x.a)));
 
     let mut res = join.and_then(|x| {
         Ok((x, tuples_read.get()))
