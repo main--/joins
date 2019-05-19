@@ -170,7 +170,7 @@ impl<L, R, D> Stream for OrderedMergeJoin<L, R, D>
                 Ordering::Greater => {
                     assert!(!self.replay_mode);
                     if !self.eq_buffer.is_empty() {
-                        println!("entering replay mode with {:?}", self.eq_buffer);
+                        //println!("entering replay mode with {:?}", self.eq_buffer);
                         self.replay_mode = true;
                     }
 
@@ -431,13 +431,16 @@ where
     });
 
 
+    let mut timings = Vec::new();
     loop {
         match res.poll().unwrap() {
             Async::Ready(None) => break,
             Async::NotReady => unimplemented!(),
-            x => println!("{:?}", x),
+            Async::Ready(Some((_, x))) => timings.push(x),
+            //x => println!("{:?}", x),
         }
     }
+    println!("timings {:?}", timings);
 }
 
 fn main() {
