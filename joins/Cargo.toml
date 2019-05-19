@@ -1,0 +1,8 @@
+[package]
+name = "joins"
+version = "0.1.0"
+authors = ["main() <main@ehvag.de>"]
+edition = "2018"
+
+[dependencies]
+futures = "0.1.27"
