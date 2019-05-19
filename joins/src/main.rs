@@ -7,7 +7,61 @@ use futures::{Future, Stream, Poll, try_ready, Async, stream};
 //    fn next(&mut self) -> Option<Option<T>>; // None = not ready; Some(None) = end
 //}
 
+equi_join! { WrapperTypeLeft(TupleTypeLeft => attribute_left) == WrapperTypeRight(TupleTypeRight => attribute_right) }
+macro_rules! equi_join {
+    ($nl:ident ( $tl:ty => $ml:ident ) == $nr:ident ( $tr:ty => $mr:ident )) => {
+        #[derive(Clone, Debug)] struct $nl($tl);
+        #[derive(Clone, Debug)] struct $nr($tr);
+        impl PartialEq<$nr> for $nl {
+            fn eq(&self, rhs: &JoinWrapperRight) -> bool {
+                (self.0).$ml == (rhs.0).$mr
+            }
+        }
+        impl PartialOrd<$nr> for $nl {
+            fn partial_cmp(&self, rhs: &JoinWrapperRight) -> Option<std::cmp::Ordering> {
+                (self.0).$ml.partial_cmp(&(rhs.0).$mr)
+            }
+        }
+        impl std::hash::Hash for $nl {
+            fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+                (self.0).$ml.hash(h)
+            }
+        }
+        impl std::hash::Hash for $nr {
+            fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+                (self.0).$mr.hash(h)
+            }
+        }
+    }
+}
 
+#[derive(Clone, Debug)]
+struct Tuple { a: i32, b: i32 }
+equi_join! { JoinWrapperLeft(Tuple => a) == JoinWrapperRight(Tuple => b) }
+
+/*
+struct JoinWrapperLeft(Tuple);
+struct JoinWrapperRight(Tuple);
+impl PartialEq<JoinWrapperRight> for JoinWrapperLeft {
+    fn eq(&self, rhs: &JoinWrapperRight) -> bool {
+        self.0.a == rhs.0.b
+    }
+}
+impl PartialOrd<JoinWrapperRight> for JoinWrapperLeft {
+    fn partial_cmp(&self, rhs: &JoinWrapperRight) -> Option<std::cmp::Ordering> {
+        self.0.a.partial_cmp(&rhs.0.b)
+    }
+}
+impl std::hash::Hash for JoinWrapperLeft {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.0.a.hash(h)
+    }
+}
+impl std::hash::Hash for JoinWrapperRight {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.0.b.hash(h)
+    }
+}*/
 
 
 // additional constraints (PartialCmp, Hash, Eq) as needed by the join implementation
@@ -231,13 +285,15 @@ fn bench_source<T>(data: Vec<T>, counter: &Rc<Cell<usize>>) -> impl Stream<Item=
 fn bencher() {
     let tuples_read = Rc::new(Cell::new(0));
 
-    let left = bench_source(vec![1,3,4,7,18], &tuples_read);
-    let right = bench_source(vec![0, 1, 3, 3,7,42,45], &tuples_read);
+    let left = bench_source(vec![1,3,4,7,18].into_iter().map(|x| Tuple { a: x, b: 0 }).collect(), &tuples_read);
+    let right = bench_source(vec![0, 1, 3, 3,7,42,45].into_iter().map(|x| Tuple { a: 0, b: x }).collect(), &tuples_read);
+    //let left = bench_source(vec![1,3,4,7,18], &tuples_read);
+    //let right = bench_source(vec![0, 1, 3, 3,7,42,45], &tuples_read);
 
-    let join = OrderedMergeJoin::build(left, right);
+    let join = OrderedMergeJoin::build(left.map(JoinWrapperLeft), right.map(JoinWrapperRight));
 
-    let mut res = join.and_then(|_| {
-        Ok(tuples_read.get())
+    let mut res = join.and_then(|x| {
+        Ok((x, tuples_read.get()))
     });
 
 
