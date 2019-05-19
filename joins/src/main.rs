@@ -7,7 +7,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::rc::Rc;
 use std::cmp::Ordering;
 use std::cell::Cell;
-use futures::{Future, Stream, Poll, try_ready, Async, stream};
+use futures::{Stream, Poll, try_ready, Async, stream};
 use multimap::MultiMap;
 
 trait JoinDefinition {
@@ -412,14 +412,13 @@ fn bench_source<T>(data: Vec<T>, counter: &Rc<Cell<usize>>) -> BenchSource<T> {
     stream::iter_ok::<_, ()>(data).inspect(move |_| { rc.set(rc.get() + 1); })
 }
 
-fn bench_join() -> BenchJoin {
-    EquiJoin::new(|x: &Tuple| (x.a, x.b), |x: &Tuple| (x.b, x.a))
-}
-
 existential type BenchSource<T>: Stream<Item=T, Error=()>;
-existential type BenchJoin: HashJoinDefinition<Left=Tuple, Right=Tuple, Output=(Tuple, Tuple)> + OrdJoinDefinition;
 
-fn bencher<J, T: Debug, D>(data_left: Vec<T>, data_right: Vec<T>, definition: D) where J: Join<BenchSource<T>, BenchSource<T>, D>, D: HashJoinDefinition + OrdJoinDefinition + JoinDefinition<Left=T, Right=T, Output=(T, T)> {
+fn bencher<J, L: Debug, R: Debug, D>(data_left: Vec<L>, data_right: Vec<R>, definition: D)
+where
+    J: Join<BenchSource<L>, BenchSource<R>, D>,
+    D: JoinDefinition<Left=L, Right=R>,
+    D::Output: Debug {
     let tuples_read = Rc::new(Cell::new(0));
 
     let left = bench_source(data_left, &tuples_read);
@@ -445,8 +444,8 @@ fn main() {
     let left_sorted: Vec<Tuple> = vec![1,3,3,3,3,3,3,3,3,4,7,18].into_iter().map(|x| Tuple { a: x, b: 0 }).collect();
     let right_sorted: Vec<Tuple> = vec![0, 1, 3, 3,3,7,42,45].into_iter().map(|x| Tuple { a: 0, b: x }).collect();
     let definition = EquiJoin::new(|x: &Tuple| (x.a, x.b), |x: &Tuple| (x.b, x.a));
-    bencher::<OrderedMergeJoin<_, _, _>, _, _>(left_sorted.clone(), right_sorted.clone(), definition.clone());
-    bencher::<SortMergeJoin<_, _, _>, _, _>(left_sorted.clone(), right_sorted.clone(), definition.clone());
-    bencher::<SimpleHashJoin<_, _, _>, _, _>(left_sorted.clone(), right_sorted.clone(), definition.clone());
-    bencher::<SymmetricHashJoin<_, _, _>, _, _>(left_sorted.clone(), right_sorted.clone(), definition.clone());
+    bencher::<OrderedMergeJoin<_, _, _>, _, _, _>(left_sorted.clone(), right_sorted.clone(), definition.clone());
+    bencher::<SortMergeJoin<_, _, _>, _, _, _>(left_sorted.clone(), right_sorted.clone(), definition.clone());
+    bencher::<SimpleHashJoin<_, _, _>, _, _, _>(left_sorted.clone(), right_sorted.clone(), definition.clone());
+    bencher::<SymmetricHashJoin<_, _, _>, _, _, _>(left_sorted.clone(), right_sorted.clone(), definition.clone());
 }
