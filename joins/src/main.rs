@@ -331,6 +331,101 @@ impl<L, R, D> SimpleHashJoin<L, R, D>
     }
 }
 
+
+
+
+struct SymmetricHashJoin<L: Stream, R: Stream, D: JoinDefinition> {
+    definition: D,
+    left: stream::Fuse<L>,
+    right: stream::Fuse<R>,
+    table_left: MultiMap<u64, L::Item>,
+    table_right: MultiMap<u64, R::Item>,
+    output_buffer: VecDeque<D::Output>,
+}
+impl<L, R, D> Stream for SymmetricHashJoin<L, R, D>
+    where L: Stream,
+          R: Stream<Error=L::Error>,
+          L::Item: Clone,
+          R::Item: Clone,
+          D: HashJoinDefinition<Left=L::Item, Right=R::Item> {
+    type Item = D::Output;
+    type Error = L::Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        loop {
+            // carry-over buffer
+            if let Some(buffered) = self.output_buffer.pop_front() {
+                return Ok(Async::Ready(Some(buffered)));
+            }
+
+            let left = self.left.poll()?;
+            let right = self.right.poll()?;
+
+            match (left, right) {
+                (Async::Ready(None), Async::Ready(None)) => return Ok(Async::Ready(None)),
+                (Async::NotReady, Async::NotReady) | (Async::Ready(None), Async::NotReady) | (Async::NotReady, Async::Ready(None)) => return Ok(Async::NotReady),
+                (l, r) => {
+                    if let Async::Ready(Some(l)) = l {
+                        let hash = self.definition.hash_left(&l);
+                        for candidate in self.table_right.get_vec(&hash).into_iter().flatten() {
+                            if let Some(x) = self.definition.eq(&l, candidate) {
+                                self.output_buffer.push_back(x);
+                            }
+                        }
+                        self.table_left.insert(hash, l);
+                    }
+                    if let Async::Ready(Some(r)) = r {
+                        let hash = self.definition.hash_right(&r);
+                        for candidate in self.table_left.get_vec(&hash).into_iter().flatten() {
+                            if let Some(x) = self.definition.eq(candidate, &r) {
+                                self.output_buffer.push_back(x);
+                            }
+                        }
+                        self.table_right.insert(hash, r);
+                    }
+                }
+            }
+        }
+
+/*
+        // build phase
+        while let Some(left) = try_ready!(self.left.poll()) {
+            self.table.insert(self.definition.hash_left(&left), left);
+        }
+
+        // probe phase
+
+
+        // actual probing (spills excess candidates to buffer)
+        while let Some(right) = try_ready!(self.right.poll()) {
+            for candidate in self.table.get_vec(&self.definition.hash_right(&right)).into_iter().flatten() {
+                if let Some(x) = self.definition.eq(candidate, &right) {
+                    self.output_buffer.push_back(x);
+                }
+            }
+            if let Some(buffered) = self.output_buffer.pop_front() {
+                return Ok(Async::Ready(Some(buffered)));
+            }
+        }
+
+        // done
+        Ok(Async::Ready(None))*/
+    }
+}
+impl<L, R, D> SymmetricHashJoin<L, R, D>
+    where L: Stream,
+          R: Stream<Error=L::Error>,
+          L::Item: Clone,
+          R::Item: Clone,
+          D: HashJoinDefinition<Left=L::Item, Right=R::Item> {
+    fn build(left: L, right: R, definition: D) -> Self {
+        SymmetricHashJoin { definition, left: left.fuse(), right: right.fuse(), table_left: MultiMap::new(), table_right: MultiMap::new(), output_buffer: VecDeque::new() }
+    }
+}
+
+
+
+
 fn bench_source<T>(data: Vec<T>, counter: &Rc<Cell<usize>>) -> impl Stream<Item=T, Error=()> {
     let rc = Rc::clone(&counter);
     stream::iter_ok::<_, ()>(data).inspect(move |_| { rc.set(rc.get() + 1); })
@@ -361,7 +456,7 @@ fn bencher() {
     //let left = bench_source(vec![1,3,4,7,18], &tuples_read);
     //let right = bench_source(vec![0, 1, 3, 3,7,42,45], &tuples_read);
 
-    let join = OrderedMergeJoin::build(left, right, EquiJoin::new(|x: &Tuple| (x.a, x.b), |x: &Tuple| (x.b, x.a)));
+    let join = SymmetricHashJoin::build(left, right, EquiJoin::new(|x: &Tuple| (x.a, x.b), |x: &Tuple| (x.b, x.a)));
 
     let mut res = join.and_then(|x| {
         Ok((x, tuples_read.get()))
