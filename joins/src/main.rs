@@ -125,7 +125,7 @@ impl<P, L, R> Stream for SortMergeJoin<P, L, R>
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         loop {
             match self {
-                SortMergeJoin::InputPhase { predicate, left, right, left_buf, right_buf } => {
+                SortMergeJoin::InputPhase { left, right, left_buf, right_buf, .. } => {
                     let l = left.poll()?;
                     let r = right.poll()?;
 
@@ -147,7 +147,7 @@ impl<P, L, R> Stream for SortMergeJoin<P, L, R>
             }
 
             *self = match std::mem::replace(self, SortMergeJoin::Tmp) {
-                SortMergeJoin::InputPhase { predicate, left, right, mut left_buf, mut right_buf } => {
+                SortMergeJoin::InputPhase { predicate, mut left_buf, mut right_buf, .. } => {
                     left_buf.sort();
                     right_buf.sort();
                     SortMergeJoin::OutputPhase(OrderedMergeJoin::build(predicate, stream::iter_ok(left_buf), stream::iter_ok(right_buf)))
@@ -164,7 +164,7 @@ impl<P, L, R> Join<P, L, R> for SortMergeJoin<P, L, R>
           R: Stream<Error=L::Error>,
           L::Item: Clone + PartialOrd<R::Item> + Ord,
           R::Item: Clone + Ord {
-    fn build(predicate: P, mut left: L, right: R) -> Self {
+    fn build(predicate: P, left: L, right: R) -> Self {
         SortMergeJoin::InputPhase { predicate, left: left.fuse(), right: right.fuse(), left_buf: Vec::new(), right_buf: Vec::new() }
     }
 }
@@ -243,26 +243,56 @@ impl<T: Clone> Stream for MemorySource<T> {
 */
 
 
+
+struct BenchPredicate;
+impl JoinPredicate<i32, i32> for BenchPredicate {
+    type Output = i32;
+    fn call(&self, a: i32, b: i32) -> Option<i32> {
+        if a == b { Some(a) } else { None }
+    }
+}
+
+//struct BenchDataSource;
+
+
+fn bencher() {
+    use std::rc::Rc;
+    use std::cell::Cell;
+
+    let tuples_read = Rc::new(Cell::new(0));
+
+    let rc = Rc::clone(&tuples_read);
+    let left = stream::iter_ok::<_, ()>(vec![1,3,4,7,18]).inspect(move |_| { rc.set(rc.get() + 1); });
+    let rc = Rc::clone(&tuples_read);
+    let right = stream::iter_ok(vec![0, 1, 3, 3,7,42,45]).inspect(move |_| { rc.set(rc.get() + 1); });
+
+    let join = OrderedMergeJoin::build(BenchPredicate, left, right);
+
+    let mut res = join.and_then(|_| {
+        Ok(tuples_read.get())
+    });
+
+
+    loop {
+        match res.poll().unwrap() {
+            Async::Ready(None) => break,
+            Async::NotReady => unimplemented!(),
+            x => println!("{:?}", x),
+        }
+    }
+}
+
 fn main() {
-    let left = stream::iter_ok::<_, ()>(vec![1,3,4,7,18]);
+/*    let left = stream::iter_ok::<_, ()>(vec![1,3,4,7,18]);
     let right = stream::iter_ok(vec![88, 0, 1, 3, 3,7,42,45]);
 
     let mut join = SortMergeJoin::build(EquiJoin::make(|x, y| x == y), left, right);
 
-/*
-    let left = MemorySource { vec: vec![1,3,18,4,7], index: 0 };
-    let right = MemorySource { vec: vec![42, 1, 45, 3, 0, 3,7], index: 0 };
-
-
-    //let mut join = NestedLoopJoin::build(JP, left, right);
-    //let mut join = NestedLoopJoin::build(|x, y| if x == y { Some(x) } else { None }, left, right);
-    let mut join = NestedLoopJoin::build(EquiJoin::make(|&x, &y| x == (y+0)), left, right);
-
-    */
     loop {
         match join.poll().unwrap() {
             Async::Ready(None) => break,
             x => println!("{:?}", x),
         }
-    }
+    }*/
+    bencher();
 }
