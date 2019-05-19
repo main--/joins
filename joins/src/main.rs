@@ -1,3 +1,5 @@
+#![feature(existential_type)]
+
 use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::fmt::Debug;
@@ -104,12 +106,13 @@ where GetKeyLeft: Fn(&Left) -> KeyLeft,
 struct Tuple { a: i32, b: i32 }
 
 // additional constraints (PartialCmp, Hash, Eq) as needed by the join implementation
-/*
-trait Join<Left, Right> : Stream<Item=(Left::Item, Right::Item), Error=Left::Error>
+
+trait Join<Left, Right, Definition> : Stream<Item=Definition::Output, Error=Left::Error>
     where Left: Stream,
-          Right: Stream<Error=Left::Error> {
-    fn build(left: Left, right: Right) -> Self;
-}*/
+          Right: Stream<Error=Left::Error>,
+          Definition: JoinDefinition<Left=Left::Item, Right=Right::Item> {
+    fn build(left: Left, right: Right, definition: Definition) -> Self;
+}
 
 struct OrderedMergeJoin<L: Stream, R: Stream, D> {
     left: stream::Peekable<L>,
@@ -196,11 +199,12 @@ impl<L, R, D> Stream for OrderedMergeJoin<L, R, D>
 }
 
 
-impl<L, R, D> OrderedMergeJoin<L, R, D>
+impl<L, R, D> Join<L, R, D> for OrderedMergeJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          L::Item: Clone,
-          R::Item: Clone {
+          L::Item: Clone + Debug,
+          R::Item: Clone + Debug,
+          D: OrdJoinDefinition<Left=L::Item, Right=R::Item> {
     fn build(left: L, right: R, definition: D) -> Self {
         OrderedMergeJoin { left: left.peekable(), right: right.peekable(), definition, eq_buffer: Vec::new(), eq_cursor: 0, replay_mode: false }
     }
@@ -264,11 +268,11 @@ impl<L, R, D> Stream for SortMergeJoin<L, R, D>
     }
 }
 
-impl<L, R, D> SortMergeJoin<L, R, D>
+impl<L, R, D> Join<L, R, D> for SortMergeJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          L::Item: Clone,
-          R::Item: Clone,
+          L::Item: Clone + Debug,
+          R::Item: Clone + Debug,
           D: OrdJoinDefinition<Left=L::Item, Right=R::Item> {
     fn build(left: L, right: R, definition: D) -> Self {
         SortMergeJoin::InputPhase { left: left.fuse(), right: right.fuse(), left_buf: Vec::new(), right_buf: Vec::new(), definition }
@@ -320,7 +324,7 @@ impl<L, R, D> Stream for SimpleHashJoin<L, R, D>
         Ok(Async::Ready(None))
     }
 }
-impl<L, R, D> SimpleHashJoin<L, R, D>
+impl<L, R, D> Join<L, R, D> for SimpleHashJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
           L::Item: Clone,
@@ -386,33 +390,9 @@ impl<L, R, D> Stream for SymmetricHashJoin<L, R, D>
                 }
             }
         }
-
-/*
-        // build phase
-        while let Some(left) = try_ready!(self.left.poll()) {
-            self.table.insert(self.definition.hash_left(&left), left);
-        }
-
-        // probe phase
-
-
-        // actual probing (spills excess candidates to buffer)
-        while let Some(right) = try_ready!(self.right.poll()) {
-            for candidate in self.table.get_vec(&self.definition.hash_right(&right)).into_iter().flatten() {
-                if let Some(x) = self.definition.eq(candidate, &right) {
-                    self.output_buffer.push_back(x);
-                }
-            }
-            if let Some(buffered) = self.output_buffer.pop_front() {
-                return Ok(Async::Ready(Some(buffered)));
-            }
-        }
-
-        // done
-        Ok(Async::Ready(None))*/
     }
 }
-impl<L, R, D> SymmetricHashJoin<L, R, D>
+impl<L, R, D> Join<L, R, D> for SymmetricHashJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
           L::Item: Clone,
@@ -426,37 +406,25 @@ impl<L, R, D> SymmetricHashJoin<L, R, D>
 
 
 
-fn bench_source<T>(data: Vec<T>, counter: &Rc<Cell<usize>>) -> impl Stream<Item=T, Error=()> {
+fn bench_source<T>(data: Vec<T>, counter: &Rc<Cell<usize>>) -> BenchSource<T> {
     let rc = Rc::clone(&counter);
     stream::iter_ok::<_, ()>(data).inspect(move |_| { rc.set(rc.get() + 1); })
 }
 
-
-/*
-struct ItemCounter<T> {
-    inner: T,
-    counter: Rc<Cell<usize>>,
+fn bench_join() -> BenchJoin {
+    EquiJoin::new(|x: &Tuple| (x.a, x.b), |x: &Tuple| (x.b, x.a))
 }
-impl<T> Stream for ItemCounter<T> where T: Stream {
-    type Item = T::Item;
-    type Error = T::Error;
-    fn poll(&mut self) -> Poll<Option<T::Item>, T::Error> {
-        let x = try_ready!(self.inner.poll());
-        self.counter.set(self.counter.get() + 1);
-        Ok(Async::Ready(x))
-    }
-}
-*/
 
-fn bencher() {
+existential type BenchSource<T>: Stream<Item=T, Error=()>;
+existential type BenchJoin: HashJoinDefinition<Left=Tuple, Right=Tuple, Output=(Tuple, Tuple)> + OrdJoinDefinition;
+
+fn bencher<J>() where J: Join<BenchSource<Tuple>, BenchSource<Tuple>, BenchJoin> {
     let tuples_read = Rc::new(Cell::new(0));
 
     let left = bench_source(vec![1,3,3,3,3,3,3,3,3,4,7,18].into_iter().map(|x| Tuple { a: x, b: 0 }).collect(), &tuples_read);
     let right = bench_source(vec![0, 1, 3, 3,3,7,42,45].into_iter().map(|x| Tuple { a: 0, b: x }).collect(), &tuples_read);
-    //let left = bench_source(vec![1,3,4,7,18], &tuples_read);
-    //let right = bench_source(vec![0, 1, 3, 3,7,42,45], &tuples_read);
 
-    let join = SymmetricHashJoin::build(left, right, EquiJoin::new(|x: &Tuple| (x.a, x.b), |x: &Tuple| (x.b, x.a)));
+    let join = J::build(left, right, bench_join());
 
     let mut res = join.and_then(|x| {
         Ok((x, tuples_read.get()))
@@ -473,16 +441,8 @@ fn bencher() {
 }
 
 fn main() {
-/*    let left = stream::iter_ok::<_, ()>(vec![1,3,4,7,18]);
-    let right = stream::iter_ok(vec![88, 0, 1, 3, 3,7,42,45]);
-
-    let mut join = SortMergeJoin::build(EquiJoin::make(|x, y| x == y), left, right);
-
-    loop {
-        match join.poll().unwrap() {
-            Async::Ready(None) => break,
-            x => println!("{:?}", x),
-        }
-    }*/
-    bencher();
+    bencher::<OrderedMergeJoin<_, _, _>>();
+    bencher::<SortMergeJoin<_, _, _>>();
+    bencher::<SimpleHashJoin<_, _, _>>();
+    bencher::<SymmetricHashJoin<_, _, _>>();
 }
