@@ -1,71 +1,104 @@
+use std::hash::{Hash, Hasher};
+use std::collections::hash_map::DefaultHasher;
 use std::rc::Rc;
+use std::cmp::Ordering;
 use std::cell::Cell;
 use futures::{Future, Stream, Poll, try_ready, Async, stream};
 
-// equi_join! { WrapperTypeLeft(TupleTypeLeft => attribute_left) == WrapperTypeRight(TupleTypeRight => attribute_right) }
-macro_rules! equi_join {
-    ($nl:ident ( $tl:ty => $ml:ident ) == $nr:ident ( $tr:ty => $mr:ident )) => {
-        #[derive(Clone, Debug)] struct $nl($tl);
-        #[derive(Clone, Debug)] struct $nr($tr);
-        impl PartialEq<$nl> for $nl {
-            fn eq(&self, rhs: &$nl) -> bool {
-                (self.0).$ml == (rhs.0).$ml
-            }
-        }
-        impl Eq for $nl {}
-        impl PartialEq<$nr> for $nr {
-            fn eq(&self, rhs: &$nr) -> bool {
-                (self.0).$mr == (rhs.0).$mr
-            }
-        }
-        impl Eq for $nr {}
-        impl PartialEq<$nr> for $nl {
-            fn eq(&self, rhs: &$nr) -> bool {
-                (self.0).$ml == (rhs.0).$mr
-            }
-        }
-        impl PartialOrd<$nl> for $nl {
-            fn partial_cmp(&self, rhs: &$nl) -> Option<std::cmp::Ordering> {
-                (self.0).$ml.partial_cmp(&(rhs.0).$ml)
-            }
-        }
-        impl Ord for $nl {
-            fn cmp(&self, rhs: &$nl) -> std::cmp::Ordering {
-                (self.0).$ml.cmp(&(rhs.0).$ml)
-            }
-        }
-        impl PartialOrd<$nr> for $nr {
-            fn partial_cmp(&self, rhs: &$nr) -> Option<std::cmp::Ordering> {
-                (self.0).$mr.partial_cmp(&(rhs.0).$mr)
-            }
-        }
-        impl Ord for $nr {
-            fn cmp(&self, rhs: &$nr) -> std::cmp::Ordering {
-                (self.0).$mr.cmp(&(rhs.0).$mr)
-            }
-        }
-        impl PartialOrd<$nr> for $nl {
-            fn partial_cmp(&self, rhs: &$nr) -> Option<std::cmp::Ordering> {
-                (self.0).$ml.partial_cmp(&(rhs.0).$mr)
-            }
-        }
-        impl std::hash::Hash for $nl {
-            fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-                (self.0).$ml.hash(h)
-            }
-        }
-        impl std::hash::Hash for $nr {
-            fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-                (self.0).$mr.hash(h)
-            }
+trait JoinDefinition {
+    type Left;
+    type Right;
+    type Output;
+
+    fn eq(&self, left: &Self::Left, right: &Self::Right) -> Option<Self::Output>;
+}
+trait OrdJoinDefinition: JoinDefinition {
+    fn cmp(&self, left: &Self::Left, right: &Self::Right) -> Option<Ordering>;
+    fn cmp_left(&self, a: &Self::Left, b: &Self::Left) -> Ordering;
+    fn cmp_right(&self, a: &Self::Right, b: &Self::Right) -> Ordering;
+}
+trait HashJoinDefinition: JoinDefinition {
+    fn hash_left(&self, x: &Self::Left) -> u64;
+    fn hash_right(&self, x: &Self::Right) -> u64;
+}
+struct EquiJoin<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight>
+where GetKeyLeft: Fn(&Left) -> KeyLeft,
+      GetKeyRight: Fn(&Right) -> KeyRight {
+    get_key_left: GetKeyLeft,
+    get_key_right: GetKeyRight,
+
+    left: std::marker::PhantomData<Left>,
+    right: std::marker::PhantomData<Right>,
+}
+impl<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight> EquiJoin<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight>
+where GetKeyLeft: Fn(&Left) -> KeyLeft,
+      GetKeyRight: Fn(&Right) -> KeyRight,
+      KeyLeft: PartialEq<KeyRight>,
+      Left: Clone,
+      Right: Clone {
+    fn new(get_key_left: GetKeyLeft, get_key_right: GetKeyRight) -> Self {
+        EquiJoin { get_key_left, get_key_right, left: std::marker::PhantomData, right: std::marker::PhantomData }
+    }
+}
+impl<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight> JoinDefinition for EquiJoin<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight>
+where GetKeyLeft: Fn(&Left) -> KeyLeft,
+      GetKeyRight: Fn(&Right) -> KeyRight,
+      KeyLeft: PartialEq<KeyRight>,
+      Left: Clone,
+      Right: Clone {
+    type Left = Left;
+    type Right = Right;
+    type Output = (Left, Right);
+
+    fn eq(&self, left: &Self::Left, right: &Self::Right) -> Option<Self::Output> {
+        if (self.get_key_left)(left) == (self.get_key_right)(right) {
+            Some((left.clone(), right.clone()))
+        } else {
+            None
         }
     }
 }
+impl<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight> OrdJoinDefinition for EquiJoin<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight>
+where GetKeyLeft: Fn(&Left) -> KeyLeft,
+      GetKeyRight: Fn(&Right) -> KeyRight,
+      KeyLeft: Ord + PartialOrd<KeyRight>,
+      KeyRight: Ord,
+      Left: Clone,
+      Right: Clone {
+    fn cmp(&self, left: &Self::Left, right: &Self::Right) -> Option<Ordering> {
+        (self.get_key_left)(left).partial_cmp(&(self.get_key_right)(right))
+    }
+    fn cmp_left(&self, a: &Self::Left, b: &Self::Left) -> Ordering {
+        (self.get_key_left)(a).cmp(&(self.get_key_left)(b))
+    }
+    fn cmp_right(&self, a: &Self::Right, b: &Self::Right) -> Ordering {
+        (self.get_key_right)(a).cmp(&(self.get_key_right)(b))
+    }
+}
+impl<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight> HashJoinDefinition for EquiJoin<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight>
+where GetKeyLeft: Fn(&Left) -> KeyLeft,
+      GetKeyRight: Fn(&Right) -> KeyRight,
+      KeyLeft: PartialEq<KeyRight> + Hash,
+      KeyRight: Hash,
+      Left: Clone,
+      Right: Clone {
+    fn hash_left(&self, x: &Self::Left) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        (self.get_key_left)(x).hash(&mut hasher);
+        hasher.finish()
+    }
+    fn hash_right(&self, x: &Self::Right) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        (self.get_key_right)(x).hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+
+
 
 #[derive(Clone, Debug)]
 struct Tuple { a: i32, b: i32 }
-equi_join! { JoinWrapperLeft(Tuple => a) == JoinWrapperRight(Tuple => b) }
-
 
 // additional constraints (PartialCmp, Hash, Eq) as needed by the join implementation
 /*
@@ -75,22 +108,19 @@ trait Join<Left, Right> : Stream<Item=(Left::Item, Right::Item), Error=Left::Err
     fn build(left: Left, right: Right) -> Self;
 }*/
 
-struct OrderedMergeJoin<L: Stream, R: Stream, KL, KR> {
+struct OrderedMergeJoin<L: Stream, R: Stream, D> {
     left: stream::Peekable<L>,
     right: stream::Peekable<R>,
-    key_left: KL,
-    key_right: KR,
+    definition: D,
 }
 
-impl<L, R, KL, KR, KKL, KKR> Stream for OrderedMergeJoin<L, R, KL, KR>
+impl<L, R, D> Stream for OrderedMergeJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
           L::Item: Clone,
           R::Item: Clone,
-          KL: for<'a> Fn(&'a L::Item) -> KKL,
-          KR: for<'a> Fn(&'a R::Item) -> KKR,
-          KKL: PartialOrd<KKR> {
-    type Item = (L::Item, R::Item);
+          D: OrdJoinDefinition<Left=L::Item, Right=R::Item> {
+    type Item = D::Output;
     type Error = L::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
@@ -101,10 +131,8 @@ impl<L, R, KL, KR, KKL, KKR> Stream for OrderedMergeJoin<L, R, KL, KR>
                 let right = try_ready!(self.right.peek());
                 match (left, right) {
                     (Some(l), Some(r)) => {
-                        let kl = (self.key_left)(l);
-                        let kr = (self.key_right)(r);
-                        ret = if kl == kr { Some((l.clone(), r.clone())) } else { None };
-                        kl < kr
+                        ret = self.definition.eq(l, r);
+                        self.definition.cmp(l, r) == Some(Ordering::Less)
                     }
                     _ => break,
                 }
@@ -125,35 +153,36 @@ impl<L, R, KL, KR, KKL, KKR> Stream for OrderedMergeJoin<L, R, KL, KR>
 }
 
 
-impl<L, R, KL, KR> OrderedMergeJoin<L, R, KL, KR>
+impl<L, R, D> OrderedMergeJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
           L::Item: Clone,
           R::Item: Clone {
-    fn build(left: L, right: R, key_left: KL, key_right: KR) -> Self {
-        OrderedMergeJoin { left: left.peekable(), right: right.peekable(), key_left, key_right }
+    fn build(left: L, right: R, definition: D) -> Self {
+        OrderedMergeJoin { left: left.peekable(), right: right.peekable(), definition }
     }
 }
 
 
-/*
-enum SortMergeJoin<L: Stream, R: Stream> {
+enum SortMergeJoin<L: Stream, R: Stream, D> {
     InputPhase {
+        definition: D,
         left: stream::Fuse<L>,
         right: stream::Fuse<R>,
 
         left_buf: Vec<L::Item>,
         right_buf: Vec<R::Item>,
     },
-    OutputPhase(OrderedMergeJoin<stream::IterOk<std::vec::IntoIter<L::Item>, L::Error>, stream::IterOk<std::vec::IntoIter<R::Item>, R::Error>>),
+    OutputPhase(OrderedMergeJoin<stream::IterOk<std::vec::IntoIter<L::Item>, L::Error>, stream::IterOk<std::vec::IntoIter<R::Item>, R::Error>, D>),
     Tmp,
 }
-impl<L, R> Stream for SortMergeJoin<L, R>
+impl<L, R, D> Stream for SortMergeJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          L::Item: Clone + PartialOrd<R::Item> + Ord,
-          R::Item: Clone + Ord {
-    type Item = (L::Item, R::Item);
+          L::Item: Clone,
+          R::Item: Clone,
+          D: OrdJoinDefinition<Left=L::Item, Right=R::Item> {
+    type Item = D::Output;
     type Error = L::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
@@ -181,10 +210,10 @@ impl<L, R> Stream for SortMergeJoin<L, R>
             }
 
             *self = match std::mem::replace(self, SortMergeJoin::Tmp) {
-                SortMergeJoin::InputPhase { mut left_buf, mut right_buf, .. } => {
-                    left_buf.sort();
-                    right_buf.sort();
-                    SortMergeJoin::OutputPhase(OrderedMergeJoin::build(stream::iter_ok(left_buf), stream::iter_ok(right_buf)))
+                SortMergeJoin::InputPhase { mut left_buf, mut right_buf, definition, .. } => {
+                    left_buf.sort_by(|a, b| definition.cmp_left(a, b));
+                    right_buf.sort_by(|a, b| definition.cmp_right(a, b));
+                    SortMergeJoin::OutputPhase(OrderedMergeJoin::build(stream::iter_ok(left_buf), stream::iter_ok(right_buf), definition))
                 }
                 _ => unreachable!(),
             }
@@ -192,16 +221,16 @@ impl<L, R> Stream for SortMergeJoin<L, R>
     }
 }
 
-impl<L, R> SortMergeJoin<L, R>
+impl<L, R, D> SortMergeJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          L::Item: Clone + PartialOrd<R::Item> + Ord,
-          R::Item: Clone + Ord {
-    fn build(left: L, right: R) -> Self {
-        SortMergeJoin::InputPhase { left: left.fuse(), right: right.fuse(), left_buf: Vec::new(), right_buf: Vec::new() }
+          L::Item: Clone,
+          R::Item: Clone,
+          D: OrdJoinDefinition<Left=L::Item, Right=R::Item> {
+    fn build(left: L, right: R, definition: D) -> Self {
+        SortMergeJoin::InputPhase { left: left.fuse(), right: right.fuse(), left_buf: Vec::new(), right_buf: Vec::new(), definition }
     }
 }
-*/
 
 //struct SymmetricHashJoin<L: Stream, R: Stream> {}
 
@@ -218,7 +247,7 @@ fn bencher() {
     //let left = bench_source(vec![1,3,4,7,18], &tuples_read);
     //let right = bench_source(vec![0, 1, 3, 3,7,42,45], &tuples_read);
 
-    let join = OrderedMergeJoin::build(left, right, |x: &Tuple| x.a, |x: &Tuple| x.b);
+    let join = SortMergeJoin::build(left, right, EquiJoin::new(|x: &Tuple| x.a, |x: &Tuple| x.b));
 
     let mut res = join.and_then(|x| {
         Ok((x, tuples_read.get()))
