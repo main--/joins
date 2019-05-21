@@ -2,8 +2,8 @@
 
 use std::fmt::Debug;
 use std::rc::Rc;
-use std::cell::Cell;
-use futures::{Future, Stream, Async, stream};
+use std::cell::RefCell;
+use futures::{Future, Stream, Async, stream, Poll};
 use named_type::NamedType;
 
 
@@ -17,18 +17,91 @@ use join::*;
 #[derive(Clone, Debug)]
 struct Tuple { a: i32, b: i32 }
 
-// additional constraints (PartialCmp, Hash, Eq) as needed by the join implementation
+type Fraction = fraction::GenericFraction<usize>;
 
-
+#[derive(Debug, Copy, Clone)]
+enum Side { Left, Right }
 
 struct IoSimulator {
-    //read_left:
+    right_to_left: Fraction,
+    input_batch_size: Fraction,
+    disk_ops_per_refill: usize,
+
+    left_budget: Fraction,
+    right_budget: Fraction,
+
+    read_tuple_count: usize,
+    disk_ops_count: usize,
+}
+impl IoSimulator {
+    fn add_input_budget(&mut self) {
+        let input = self.input_batch_size;
+        self.left_budget += input;
+        self.right_budget += input * self.right_to_left;
+    }
+    fn read_tuple(&mut self, side: Side) -> bool {
+        let budget = match side {
+            Side::Left => &mut self.left_budget,
+            Side::Right => &mut self.right_budget,
+        };
+        let one = Fraction::from(1);
+        if *budget >= one {
+            *budget -= one;
+            self.read_tuple_count += 1;
+            println!("read tuple {:?}", side);
+            true
+        } else {
+            false
+        }
+    }
+    fn notify_disk_io(&mut self, amount: usize) {
+        let refills = (amount + (self.disk_ops_count % self.disk_ops_per_refill)) / self.disk_ops_per_refill;
+        for _ in 0..refills {
+            self.add_input_budget();
+        }
+        self.disk_ops_count += amount;
+    }
+
+    fn new() -> Rc<RefCell<IoSimulator>> {
+        Rc::new(RefCell::new(IoSimulator {
+            right_to_left: Fraction::from(1),
+            input_batch_size: Fraction::from(1),
+            disk_ops_per_refill: 0, // not implemented
+
+            left_budget: Fraction::neg_zero(),
+            right_budget: Fraction::neg_zero(),
+            read_tuple_count: 0,
+            disk_ops_count: 0,
+        }))
+    }
+}
+struct TupleInputThrottle<T> {
+    underlying: T,
+    side: Side,
+    simulator: Rc<RefCell<IoSimulator>>,
+}
+impl<T: Stream> Stream for TupleInputThrottle<T> {
+    type Item = T::Item;
+    type Error = T::Error;
+
+    fn poll(&mut self) -> Poll<Option<T::Item>, T::Error> {
+        if self.simulator.borrow_mut().read_tuple(self.side) {
+            self.underlying.poll()
+        } else {
+            Ok(Async::NotReady)
+        }
+    }
 }
 
 
-fn bench_source<T>(data: Vec<T>, counter: &Rc<Cell<usize>>) -> BenchSource<T> {
-    let rc = Rc::clone(&counter);
-    stream::iter_ok::<_, ()>(data).inspect(move |_| { rc.set(rc.get() + 1); })
+fn bench_source<T>(data: Vec<T>, simulator: &Rc<RefCell<IoSimulator>>, side: Side) -> BenchSource<T> {
+    let rc = Rc::clone(&simulator);
+    TupleInputThrottle {
+        underlying: stream::iter_ok::<_, ()>(data),
+        side,
+        simulator: rc,
+    }
+    //stream::iter_ok::<_, ()>(data).inspect(move |_| { rc.set(rc.get() + 1); })
 }
 
 existential type BenchSource<T>: Stream<Item=T, Error=()>;
@@ -38,20 +111,24 @@ where
     J: Join<BenchSource<L>, BenchSource<R>, D> + NamedType,
     D: JoinPredicate<Left=L, Right=R>,
     D::Output: Debug {
-    let tuples_read = Rc::new(Cell::new(0));
+    //let tuples_read = Rc::new(Cell::new(0));
+    let tuples_read = IoSimulator::new();
 
-    let left = bench_source(data_left, &tuples_read);
-    let right = bench_source(data_right, &tuples_read);
+    let left = bench_source(data_left, &tuples_read, Side::Left);
+    let right = bench_source(data_right, &tuples_read, Side::Right);
 
     let join = J::build(left, right, definition);
 
     let mut timings = Vec::new();
-    let timed = join.inspect(|_| timings.push(tuples_read.get()));
+    let timed = join.inspect(|_| timings.push(tuples_read.borrow().read_tuple_count));
 
-    let results = match timed.collect().poll().unwrap() {
-        Async::Ready(x) => x,
-        Async::NotReady => unimplemented!(),
-    };
+    let mut collector = timed.collect();
+    loop {
+        match collector.poll().unwrap() {
+            Async::Ready(_) => break,
+            Async::NotReady => tuples_read.borrow_mut().add_input_budget(),
+        }
+    }
     println!("timings {}: {:?}", J::short_type_name(), timings);
 }
 
