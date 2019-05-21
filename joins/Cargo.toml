@@ -7,3 +7,5 @@ edition = "2018"
 [dependencies]
 futures = "0.1.27"
 multimap = "0.5"
+named_type = "0.2.1"
+named_type_derive = "0.2.1"

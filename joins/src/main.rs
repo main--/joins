@@ -7,8 +7,10 @@ use std::collections::hash_map::DefaultHasher;
 use std::rc::Rc;
 use std::cmp::Ordering;
 use std::cell::Cell;
-use futures::{Stream, Poll, try_ready, Async, stream};
+use futures::{Future, Stream, Poll, try_ready, Async, stream};
 use multimap::MultiMap;
+use named_type::NamedType;
+use named_type_derive::*;
 
 trait JoinDefinition {
     type Left;
@@ -108,13 +110,14 @@ struct Tuple { a: i32, b: i32 }
 
 // additional constraints (PartialCmp, Hash, Eq) as needed by the join implementation
 
-trait Join<Left, Right, Definition> : Stream<Item=Definition::Output, Error=Left::Error>
+trait Join<Left, Right, Definition>: Stream<Item=Definition::Output, Error=Left::Error>
     where Left: Stream,
           Right: Stream<Error=Left::Error>,
           Definition: JoinDefinition<Left=Left::Item, Right=Right::Item> {
     fn build(left: Left, right: Right, definition: Definition) -> Self;
 }
 
+#[derive(NamedType)]
 struct OrderedMergeJoin<L: Stream, R: Stream, D> {
     left: stream::Peekable<L>,
     right: stream::Peekable<R>,
@@ -212,6 +215,7 @@ impl<L, R, D> Join<L, R, D> for OrderedMergeJoin<L, R, D>
 }
 
 
+#[derive(NamedType)]
 enum SortMergeJoin<L: Stream, R: Stream, D> {
     InputPhase {
         definition: D,
@@ -280,6 +284,7 @@ impl<L, R, D> Join<L, R, D> for SortMergeJoin<L, R, D>
     }
 }
 
+#[derive(NamedType)]
 struct SimpleHashJoin<L: Stream, R: Stream, D: JoinDefinition> {
     definition: D,
     left: stream::Fuse<L>,
@@ -338,7 +343,7 @@ impl<L, R, D> Join<L, R, D> for SimpleHashJoin<L, R, D>
 
 
 
-
+#[derive(NamedType)]
 struct SymmetricHashJoin<L: Stream, R: Stream, D: JoinDefinition> {
     definition: D,
     left: stream::Fuse<L>,
@@ -406,6 +411,10 @@ impl<L, R, D> Join<L, R, D> for SymmetricHashJoin<L, R, D>
 
 
 
+struct IoSimulator {
+    //read_left:
+}
+
 
 fn bench_source<T>(data: Vec<T>, counter: &Rc<Cell<usize>>) -> BenchSource<T> {
     let rc = Rc::clone(&counter);
@@ -416,7 +425,7 @@ existential type BenchSource<T>: Stream<Item=T, Error=()>;
 
 fn bencher<J, L: Debug, R: Debug, D>(data_left: Vec<L>, data_right: Vec<R>, definition: D)
 where
-    J: Join<BenchSource<L>, BenchSource<R>, D>,
+    J: Join<BenchSource<L>, BenchSource<R>, D> + NamedType,
     D: JoinDefinition<Left=L, Right=R>,
     D::Output: Debug {
     let tuples_read = Rc::new(Cell::new(0));
@@ -426,21 +435,14 @@ where
 
     let join = J::build(left, right, definition);
 
-    let mut res = join.and_then(|x| {
-        Ok((x, tuples_read.get()))
-    });
-
-
     let mut timings = Vec::new();
-    loop {
-        match res.poll().unwrap() {
-            Async::Ready(None) => break,
-            Async::NotReady => unimplemented!(),
-            Async::Ready(Some((_, x))) => timings.push(x),
-            //x => println!("{:?}", x),
-        }
-    }
-    println!("timings {:?}", timings);
+    let timed = join.inspect(|_| timings.push(tuples_read.get()));
+
+    let results = match timed.collect().poll().unwrap() {
+        Async::Ready(x) => x,
+        Async::NotReady => unimplemented!(),
+    };
+    println!("timings {}: {:?}", J::short_type_name(), timings);
 }
 
 fn main() {
