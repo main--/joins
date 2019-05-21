@@ -110,16 +110,16 @@ where
     J: Join<BenchSource<D::Left>, BenchSource<D::Right>, D> + NamedType,
     D: JoinPredicate,
     D::Output: Debug {
-    let tuples_read = IoSimulator::new();
-    tuples_read.borrow_mut().right_to_left = Fraction::new(2usize, 1usize);
+    let simulator = IoSimulator::new();
+    simulator.borrow_mut().right_to_left = Fraction::new(2usize, 1usize);
 
-    let left = bench_source(data_left, &tuples_read, Side::Left);
-    let right = bench_source(data_right, &tuples_read, Side::Right);
+    let left = bench_source(data_left, &simulator, Side::Left);
+    let right = bench_source(data_right, &simulator, Side::Right);
 
     let join = J::build(left, right, definition);
 
     let mut timings = Vec::new();
-    let timed = join.inspect(|_| timings.push(tuples_read.borrow().read_tuple_count));
+    let timed = join.inspect(|_| timings.push(simulator.borrow().read_tuple_count));
 
     let mut collector = timed.collect();
     loop {
@@ -128,7 +128,7 @@ where
                 println!("result {:?}", result);
                 break;
             }
-            Async::NotReady => tuples_read.borrow_mut().add_input_budget(),
+            Async::NotReady => simulator.borrow_mut().add_input_budget(),
         }
     }
     println!("timings {}: {:?}", J::short_type_name(), timings);
