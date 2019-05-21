@@ -19,8 +19,6 @@ pub struct SymmetricHashJoin<L: Stream, R: Stream, D: HashPredicate> {
 impl<L, R, D> Stream for SymmetricHashJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          L::Item: Clone,
-          R::Item: Clone,
           D: HashPredicate<Left=L::Item, Right=R::Item> {
     type Item = D::Output;
     type Error = L::Error;
@@ -65,8 +63,6 @@ impl<L, R, D> Stream for SymmetricHashJoin<L, R, D>
 impl<L, R, D> Join<L, R, D> for SymmetricHashJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          L::Item: Clone,
-          R::Item: Clone,
           D: HashPredicate<Left=L::Item, Right=R::Item> {
     fn build(left: L, right: R, definition: D) -> Self {
         SymmetricHashJoin { definition, left: left.fuse(), right: right.fuse(), table_left: MultiMap::new(), table_right: MultiMap::new(), output_buffer: VecDeque::new() }

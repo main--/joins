@@ -18,8 +18,6 @@ pub struct SimpleHashJoin<L: Stream, R: Stream, D: HashPredicate> {
 impl<L, R, D> Stream for SimpleHashJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          L::Item: Clone,
-          R::Item: Clone,
           D: HashPredicate<Left=L::Item, Right=R::Item> {
     type Item = D::Output;
     type Error = L::Error;
@@ -56,8 +54,6 @@ impl<L, R, D> Stream for SimpleHashJoin<L, R, D>
 impl<L, R, D> Join<L, R, D> for SimpleHashJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          L::Item: Clone,
-          R::Item: Clone,
           D: HashPredicate<Left=L::Item, Right=R::Item> {
     fn build(left: L, right: R, definition: D) -> Self {
         SimpleHashJoin { definition, left: left.fuse(), right, table: MultiMap::new(), output_buffer: VecDeque::new() }

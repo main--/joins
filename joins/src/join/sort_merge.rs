@@ -1,4 +1,3 @@
-use std::fmt::Debug;
 use futures::{Stream, Poll, Async, stream};
 use named_type::NamedType;
 use named_type_derive::*;
@@ -22,8 +21,6 @@ pub enum SortMergeJoin<L: Stream, R: Stream, D> {
 impl<L, R, D> Stream for SortMergeJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          L::Item: Clone + Debug,
-          R::Item: Clone + Debug,
           D: MergePredicate<Left=L::Item, Right=R::Item> {
     type Item = D::Output;
     type Error = L::Error;
@@ -67,8 +64,6 @@ impl<L, R, D> Stream for SortMergeJoin<L, R, D>
 impl<L, R, D> Join<L, R, D> for SortMergeJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          L::Item: Clone + Debug,
-          R::Item: Clone + Debug,
           D: MergePredicate<Left=L::Item, Right=R::Item> {
     fn build(left: L, right: R, definition: D) -> Self {
         SortMergeJoin::InputPhase { left: left.fuse(), right: right.fuse(), left_buf: Vec::new(), right_buf: Vec::new(), definition }
