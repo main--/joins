@@ -1,6 +1,7 @@
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
 use std::cmp::Ordering;
+use std::marker::PhantomData;
 
 pub trait JoinDefinition {
     type Left;
@@ -25,8 +26,8 @@ where GetKeyLeft: Fn(&Left) -> KeyLeft,
     get_key_left: GetKeyLeft,
     get_key_right: GetKeyRight,
 
-    left: std::marker::PhantomData<Left>,
-    right: std::marker::PhantomData<Right>,
+    left: PhantomData<fn(&Left)>,
+    right: PhantomData<fn(&Right)>,
 }
 impl<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight> EquiJoin<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight>
 where GetKeyLeft: Fn(&Left) -> KeyLeft,
@@ -35,7 +36,7 @@ where GetKeyLeft: Fn(&Left) -> KeyLeft,
       Left: Clone,
       Right: Clone {
     pub fn new(get_key_left: GetKeyLeft, get_key_right: GetKeyRight) -> Self {
-        EquiJoin { get_key_left, get_key_right, left: std::marker::PhantomData, right: std::marker::PhantomData }
+        EquiJoin { get_key_left, get_key_right, left: PhantomData, right: PhantomData }
     }
 }
 impl<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight> JoinDefinition for EquiJoin<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight>
