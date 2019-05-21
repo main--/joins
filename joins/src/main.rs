@@ -445,12 +445,20 @@ where
     println!("timings {}: {:?}", J::short_type_name(), timings);
 }
 
+fn bench_all<L: Debug + Clone, R: Debug + Clone, D>(data_left: Vec<L>, data_right: Vec<R>, definition: D)
+where
+    D: JoinDefinition<Left=L, Right=R> + HashJoinDefinition + OrdJoinDefinition + Clone,
+    D::Output: Debug {
+    bencher::<OrderedMergeJoin<_, _, _>, _, _, _>(data_left.clone(), data_right.clone(), definition.clone());
+    bencher::<SortMergeJoin<_, _, _>, _, _, _>(data_left.clone(), data_right.clone(), definition.clone());
+    bencher::<SimpleHashJoin<_, _, _>, _, _, _>(data_left.clone(), data_right.clone(), definition.clone());
+    bencher::<SymmetricHashJoin<_, _, _>, _, _, _>(data_left.clone(), data_right.clone(), definition.clone());
+}
+
 fn main() {
     let left_sorted: Vec<Tuple> = vec![1,3,3,3,3,3,3,3,3,4,7,18].into_iter().map(|x| Tuple { a: x, b: 0 }).collect();
     let right_sorted: Vec<Tuple> = vec![0, 1, 3, 3,3,7,42,45].into_iter().map(|x| Tuple { a: 0, b: x }).collect();
     let definition = EquiJoin::new(|x: &Tuple| (x.a, x.b), |x: &Tuple| (x.b, x.a));
-    bencher::<OrderedMergeJoin<_, _, _>, _, _, _>(left_sorted.clone(), right_sorted.clone(), definition.clone());
-    bencher::<SortMergeJoin<_, _, _>, _, _, _>(left_sorted.clone(), right_sorted.clone(), definition.clone());
-    bencher::<SimpleHashJoin<_, _, _>, _, _, _>(left_sorted.clone(), right_sorted.clone(), definition.clone());
-    bencher::<SymmetricHashJoin<_, _, _>, _, _, _>(left_sorted.clone(), right_sorted.clone(), definition.clone());
+    bench_all(left_sorted, right_sorted, definition);
 }
+
