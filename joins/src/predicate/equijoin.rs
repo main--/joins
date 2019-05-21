@@ -12,6 +12,9 @@ use super::*;
 /// In practice, most joins are equi-joins and don't actually require all of this versatility.
 /// That's what this type is for.
 ///
+/// It joins tuples by a **key** which is specified using closures.
+/// It returns `(left, right)` for tuples equal keys.
+///
 /// # Example
 ///
 /// ```
@@ -25,6 +28,16 @@ use super::*;
 /// ```
 ///
 /// This example shows the join predicate `Left.a = Right.z AND Left.c = Right.y * 2`.
+///
+/// # Requirements
+///
+/// In order to use this type, your tuples need to implement the following traits
+///
+/// * `KeyLeft: PartialEq<KeyRight>`: this is the bare minimum so we can actually join tuples
+/// * `KeyLeft: Clone, KeyRight: Clone`: this is required to produce output tuples since any given
+///   input tuple may match several times
+/// * `KeyLeft: Ord + PartialOrd<KeyRight>, KeyRight: Ord`: this is **optional** and enables the `MergePredicate` implementation for this join
+/// * `KeyLeft: Hash, KeyRight: Hash`: this is **optional** and enables the `HashPredicate` implementation for this join
 #[derive(Clone, Copy)]
 pub struct EquiJoin<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight>
 where GetKeyLeft: Fn(&Left) -> KeyLeft,
@@ -35,6 +48,10 @@ where GetKeyLeft: Fn(&Left) -> KeyLeft,
     left: PhantomData<fn(&Left)>,
     right: PhantomData<fn(&Right)>,
 }
+
+// TODO: support non-Clone by delegating Output generation to a trait parameter
+//       (which defaults to a clone-dependent implementation that generates tuples)
+// TODO: allow passing in a different hasher maybe?
 
 impl<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight> EquiJoin<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight>
 where GetKeyLeft: Fn(&Left) -> KeyLeft,
