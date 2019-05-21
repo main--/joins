@@ -64,7 +64,7 @@ impl<L, R, D, E> Join<L, R, D, E> for SymmetricHashJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
           D: HashPredicate<Left=L::Item, Right=R::Item> {
-    fn build(left: L, right: R, definition: D, _: E) -> Self {
+    fn build(left: L, right: R, definition: D, _: E, main_memory: usize) -> Self {
         SymmetricHashJoin { definition, left: left.fuse(), right: right.fuse(), table_left: MultiMap::new(), table_right: MultiMap::new(), output_buffer: VecDeque::new() }
     }
 }

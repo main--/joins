@@ -20,6 +20,7 @@
 //!   invoke the join predicate `O(n)` times.
 
 use std::cmp::Ordering;
+use std::rc::Rc;
 
 mod equijoin;
 pub use equijoin::EquiJoin;
@@ -41,5 +42,55 @@ pub trait MergePredicate: JoinPredicate {
 pub trait HashPredicate: JoinPredicate {
     fn hash_left(&self, x: &Self::Left) -> u64;
     fn hash_right(&self, x: &Self::Right) -> u64;
+}
+
+impl<'a, T: JoinPredicate> JoinPredicate for &'a T {
+    type Left = T::Left;
+    type Right = T::Right;
+    type Output = T::Output;
+
+    fn eq(&self, left: &Self::Left, right: &Self::Right) -> Option<Self::Output> {
+        (*self).eq(left, right)
+    }
+}
+impl<'a, T: MergePredicate> MergePredicate for &'a T {
+    fn cmp(&self, left: &Self::Left, right: &Self::Right) -> Option<Ordering> {
+        (*self).cmp(left, right)
+    }
+    fn cmp_left(&self, a: &Self::Left, b: &Self::Left) -> Ordering {
+        (*self).cmp_left(a, b)
+    }
+    fn cmp_right(&self, a: &Self::Right, b: &Self::Right) -> Ordering {
+        (*self).cmp_right(a, b)
+    }
+}
+impl<'a, T: HashPredicate> HashPredicate for &'a T {
+    fn hash_left(&self, x: &Self::Left) -> u64 { (*self).hash_left(x) }
+    fn hash_right(&self, x: &Self::Right) -> u64 { (*self).hash_right(x) }
+}
+
+impl<T: JoinPredicate> JoinPredicate for Rc<T> {
+    type Left = T::Left;
+    type Right = T::Right;
+    type Output = T::Output;
+
+    fn eq(&self, left: &Self::Left, right: &Self::Right) -> Option<Self::Output> {
+        self.as_ref().eq(left, right)
+    }
+}
+impl<T: MergePredicate> MergePredicate for Rc<T> {
+    fn cmp(&self, left: &Self::Left, right: &Self::Right) -> Option<Ordering> {
+        self.as_ref().cmp(left, right)
+    }
+    fn cmp_left(&self, a: &Self::Left, b: &Self::Left) -> Ordering {
+        self.as_ref().cmp_left(a, b)
+    }
+    fn cmp_right(&self, a: &Self::Right, b: &Self::Right) -> Ordering {
+        self.as_ref().cmp_right(a, b)
+    }
+}
+impl<T: HashPredicate> HashPredicate for Rc<T> {
+    fn hash_left(&self, x: &Self::Left) -> u64 { self.as_ref().hash_left(x) }
+    fn hash_right(&self, x: &Self::Right) -> u64 { self.as_ref().hash_right(x) }
 }
 

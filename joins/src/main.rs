@@ -102,6 +102,7 @@ impl IoSimulator {
     fn notify_disk_io(&mut self, amount: usize) {
         if self.disk_ops_per_refill == 0 {
             // disabled - never refill for disk IO
+            self.disk_ops_count += amount;
             return;
         }
 
@@ -166,10 +167,10 @@ where
     let left = bench_source(data_left, &simulator, Side::Left);
     let right = bench_source(data_right, &simulator, Side::Right);
 
-    let join = J::build(left, right, definition, BenchStorage(Rc::clone(&simulator)));
+    let join = J::build(left, right, definition, BenchStorage(Rc::clone(&simulator)), 10);
 
     let mut timings = Vec::new();
-    let timed = join.inspect(|_| timings.push(simulator.borrow().read_tuple_count));
+    let timed = join.inspect(|_| timings.push((simulator.borrow().read_tuple_count, simulator.borrow().disk_ops_count)));
 
     let mut collector = timed.collect();
     loop {

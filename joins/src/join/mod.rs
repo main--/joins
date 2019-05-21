@@ -16,6 +16,11 @@ pub trait Join<Left, Right, Definition, ExtStorage>: Stream<Item=Definition::Out
     where Left: Stream,
           Right: Stream<Error=Left::Error>,
           Definition: JoinPredicate<Left=Left::Item, Right=Right::Item> {
-    fn build(left: Left, right: Right, definition: Definition, storage: ExtStorage) -> Self;
+    fn build(
+        left: Left,
+        right: Right,
+        definition: Definition,
+        storage: ExtStorage,
+        main_memory: usize) -> Self;
 }
 
