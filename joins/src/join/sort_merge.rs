@@ -36,7 +36,7 @@ impl<L, R, D> Stream for SortMergeJoin<L, R, D>
                         (Async::Ready(None), Async::Ready(None)) => {
                             // fall out of the match in order to replace self
                         }
-                        (Async::NotReady, Async::NotReady) => return Ok(Async::NotReady),
+                        (Async::NotReady, Async::NotReady) | (Async::Ready(None), Async::NotReady) | (Async::NotReady, Async::Ready(None)) => return Ok(Async::NotReady),
                         (l, r) => {
                             if let Async::Ready(Some(l)) = l { left_buf.push(l); }
                             if let Async::Ready(Some(r)) = r { right_buf.push(r); }
