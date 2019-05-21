@@ -28,6 +28,8 @@ use super::*;
 /// ```
 ///
 /// This example shows the join predicate `Left.a = Right.z AND Left.c = Right.y * 2`.
+/// Note that the type annotations can usually be omitted once you actually pass the `EquiJoin`
+/// to a join implementation (assuming the input tuple types are unambiguous).
 ///
 /// # Requirements
 ///
@@ -45,8 +47,9 @@ where GetKeyLeft: Fn(&Left) -> KeyLeft,
     get_key_left: GetKeyLeft,
     get_key_right: GetKeyRight,
 
-    left: PhantomData<fn(&Left)>,
-    right: PhantomData<fn(&Right)>,
+    // why is this necessary ???
+    left: PhantomData<fn(&Left) -> KeyLeft>,
+    right: PhantomData<fn(&Right) -> KeyLeft>,
 }
 
 // TODO: support non-Clone by delegating Output generation to a trait parameter

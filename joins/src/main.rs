@@ -12,6 +12,51 @@ use predicate::*;
 mod join;
 use join::*;
 
+trait ExternalStorage<T> {
+    type External: External<T>;
+    fn store(&mut self, tuples: Vec<T>) -> Self::External;
+}
+trait External<T> {
+    type Iter: Iterator<Item=T>;
+    fn fetch(&self) -> Self::Iter;
+}
+
+
+pub struct BenchStorage(Rc<RefCell<IoSimulator>>);
+impl<T: Clone> ExternalStorage<T> for BenchStorage {
+    type External = BenchExternal<T>;
+    fn store(&mut self, tuples: Vec<T>) -> BenchExternal<T> {
+        self.0.borrow_mut().notify_disk_io(tuples.len());
+        BenchExternal(Rc::new(tuples), Rc::clone(&self.0))
+    }
+}
+pub struct BenchExternal<T>(Rc<Vec<T>>, Rc<RefCell<IoSimulator>>);
+impl<T: Clone> External<T> for BenchExternal<T> {
+    type Iter = BenchIter<T>;
+    fn fetch<'a>(&'a self) -> Self::Iter {
+        BenchIter {
+            data: Rc::clone(&self.0),
+            sim: Rc::clone(&self.1),
+            index: 0,
+        }
+    }
+}
+pub struct BenchIter<T> {
+    data: Rc<Vec<T>>,
+    index: usize,
+    sim: Rc<RefCell<IoSimulator>>,
+}
+impl<T: Clone> Iterator for BenchIter<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<T> {
+        self.data.get(self.index).map(Clone::clone).map(|x| {
+            self.sim.borrow_mut().notify_disk_io(1);
+            self.index += 1;
+            x
+        })
+    }
+}
 
 
 #[derive(Clone, Debug)]
