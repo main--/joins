@@ -101,18 +101,17 @@ fn bench_source<T>(data: Vec<T>, simulator: &Rc<RefCell<IoSimulator>>, side: Sid
         side,
         simulator: rc,
     }
-    //stream::iter_ok::<_, ()>(data).inspect(move |_| { rc.set(rc.get() + 1); })
 }
 
 existential type BenchSource<T>: Stream<Item=T, Error=()>;
 
-fn bencher<J, L: Debug, R: Debug, D>(data_left: Vec<L>, data_right: Vec<R>, definition: D)
+fn bencher<J, D>(data_left: Vec<D::Left>, data_right: Vec<D::Right>, definition: D)
 where
-    J: Join<BenchSource<L>, BenchSource<R>, D> + NamedType,
-    D: JoinPredicate<Left=L, Right=R>,
+    J: Join<BenchSource<D::Left>, BenchSource<D::Right>, D> + NamedType,
+    D: JoinPredicate,
     D::Output: Debug {
-    //let tuples_read = Rc::new(Cell::new(0));
     let tuples_read = IoSimulator::new();
+    tuples_read.borrow_mut().right_to_left = Fraction::new(2usize, 1usize);
 
     let left = bench_source(data_left, &tuples_read, Side::Left);
     let right = bench_source(data_right, &tuples_read, Side::Right);
@@ -125,27 +124,35 @@ where
     let mut collector = timed.collect();
     loop {
         match collector.poll().unwrap() {
-            Async::Ready(_) => break,
+            Async::Ready(result) => {
+                println!("result {:?}", result);
+                break;
+            }
             Async::NotReady => tuples_read.borrow_mut().add_input_budget(),
         }
     }
     println!("timings {}: {:?}", J::short_type_name(), timings);
 }
 
-fn bench_all<L: Debug + Clone, R: Debug + Clone, D>(data_left: Vec<L>, data_right: Vec<R>, definition: D)
+fn bench_all<D>(data_left: Vec<D::Left>, data_right: Vec<D::Right>, definition: D)
 where
-    D: JoinPredicate<Left=L, Right=R> + HashPredicate + MergePredicate + Clone,
+    D: HashPredicate + MergePredicate + Clone,
+    D::Left: Clone,
+    D::Right: Clone,
     D::Output: Debug {
-    bencher::<OrderedMergeJoin<_, _, _>, _, _, _>(data_left.clone(), data_right.clone(), definition.clone());
-    bencher::<SortMergeJoin<_, _, _>, _, _, _>(data_left.clone(), data_right.clone(), definition.clone());
-    bencher::<SimpleHashJoin<_, _, _>, _, _, _>(data_left.clone(), data_right.clone(), definition.clone());
-    bencher::<SymmetricHashJoin<_, _, _>, _, _, _>(data_left.clone(), data_right.clone(), definition.clone());
+    bencher::<OrderedMergeJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
+    bencher::<SortMergeJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
+    bencher::<SimpleHashJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
+    bencher::<SymmetricHashJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
 }
 
 fn main() {
-    let left_sorted: Vec<Tuple> = vec![1,3,3,3,3,3,3,3,3,4,7,18].into_iter().map(|x| Tuple { a: x, b: 0 }).collect();
-    let right_sorted: Vec<Tuple> = vec![0, 1, 3, 3,3,7,42,45].into_iter().map(|x| Tuple { a: 0, b: x }).collect();
-    let definition = EquiJoin::new(|x: &Tuple| (x.a, x.b), |x: &Tuple| (x.b, x.a));
+    let left_sorted: Vec<i32> = vec![1,3,3,3,3,3,3,3,3,4,7,18];
+    let right_sorted: Vec<i32> = vec![0, 1, 3, 3,3,7,42,45];
+    let definition = EquiJoin::new(|&x| x, |&x| x);
+    //let left_sorted: Vec<Tuple> = vec![1,3,3,3,3,3,3,3,3,4,7,18].into_iter().map(|x| Tuple { a: x, b: 0 }).collect();
+    //let right_sorted: Vec<Tuple> = vec![0, 1, 3, 3,3,7,42,45].into_iter().map(|x| Tuple { a: 0, b: x }).collect();
+    //let definition = EquiJoin::new(|x: &Tuple| (x.a, x.b), |x: &Tuple| (x.b, x.a));
     bench_all(left_sorted, right_sorted, definition);
 }
 
