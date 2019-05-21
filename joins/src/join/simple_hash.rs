@@ -5,10 +5,10 @@ use named_type::NamedType;
 use named_type_derive::*;
 
 use super::Join;
-use crate::definition::{JoinDefinition, HashJoinDefinition};
+use crate::predicate::HashPredicate;
 
 #[derive(NamedType)]
-pub struct SimpleHashJoin<L: Stream, R: Stream, D: JoinDefinition> {
+pub struct SimpleHashJoin<L: Stream, R: Stream, D: HashPredicate> {
     definition: D,
     left: stream::Fuse<L>,
     right: R,
@@ -20,7 +20,7 @@ impl<L, R, D> Stream for SimpleHashJoin<L, R, D>
           R: Stream<Error=L::Error>,
           L::Item: Clone,
           R::Item: Clone,
-          D: HashJoinDefinition<Left=L::Item, Right=R::Item> {
+          D: HashPredicate<Left=L::Item, Right=R::Item> {
     type Item = D::Output;
     type Error = L::Error;
 
@@ -58,7 +58,7 @@ impl<L, R, D> Join<L, R, D> for SimpleHashJoin<L, R, D>
           R: Stream<Error=L::Error>,
           L::Item: Clone,
           R::Item: Clone,
-          D: HashJoinDefinition<Left=L::Item, Right=R::Item> {
+          D: HashPredicate<Left=L::Item, Right=R::Item> {
     fn build(left: L, right: R, definition: D) -> Self {
         SimpleHashJoin { definition, left: left.fuse(), right, table: MultiMap::new(), output_buffer: VecDeque::new() }
     }

@@ -3,22 +3,28 @@ use std::collections::hash_map::DefaultHasher;
 use std::cmp::Ordering;
 use std::marker::PhantomData;
 
-pub trait JoinDefinition {
-    type Left;
-    type Right;
-    type Output;
+use super::*;
 
-    fn eq(&self, left: &Self::Left, right: &Self::Right) -> Option<Self::Output>;
-}
-pub trait OrdJoinDefinition: JoinDefinition {
-    fn cmp(&self, left: &Self::Left, right: &Self::Right) -> Option<Ordering>;
-    fn cmp_left(&self, a: &Self::Left, b: &Self::Left) -> Ordering;
-    fn cmp_right(&self, a: &Self::Right, b: &Self::Right) -> Ordering;
-}
-pub trait HashJoinDefinition: JoinDefinition {
-    fn hash_left(&self, x: &Self::Left) -> u64;
-    fn hash_right(&self, x: &Self::Right) -> u64;
-}
+/// A generic equality join.
+///
+/// The `JoinPredicate` family of traits is extremely versatile. This versatility comes at
+/// a cost however: implementing them for every single join operation by hand is clearly infeasible.
+/// In practice, most joins are equi-joins and don't actually require all of this versatility.
+/// That's what this type is for.
+///
+/// # Example
+///
+/// ```
+/// use joins::predicate::EquiJoin;
+/// #[derive(Clone, Debug)]
+/// struct Left { a: i32, b: i32, c: i32 }
+/// #[derive(Clone, Debug)]
+/// struct Right { x: i32, y: i32, z: i32 }
+///
+/// EquiJoin::new(|x: &Left| (x.a, x.c), |x: &Right| (x.z, x.y * 2));
+/// ```
+///
+/// This example shows the join predicate `Left.a = Right.z AND Left.c = Right.y * 2`.
 #[derive(Clone, Copy)]
 pub struct EquiJoin<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight>
 where GetKeyLeft: Fn(&Left) -> KeyLeft,
@@ -29,6 +35,7 @@ where GetKeyLeft: Fn(&Left) -> KeyLeft,
     left: PhantomData<fn(&Left)>,
     right: PhantomData<fn(&Right)>,
 }
+
 impl<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight> EquiJoin<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight>
 where GetKeyLeft: Fn(&Left) -> KeyLeft,
       GetKeyRight: Fn(&Right) -> KeyRight,
@@ -39,7 +46,8 @@ where GetKeyLeft: Fn(&Left) -> KeyLeft,
         EquiJoin { get_key_left, get_key_right, left: PhantomData, right: PhantomData }
     }
 }
-impl<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight> JoinDefinition for EquiJoin<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight>
+
+impl<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight> JoinPredicate for EquiJoin<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight>
 where GetKeyLeft: Fn(&Left) -> KeyLeft,
       GetKeyRight: Fn(&Right) -> KeyRight,
       KeyLeft: PartialEq<KeyRight>,
@@ -57,7 +65,8 @@ where GetKeyLeft: Fn(&Left) -> KeyLeft,
         }
     }
 }
-impl<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight> OrdJoinDefinition for EquiJoin<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight>
+
+impl<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight> MergePredicate for EquiJoin<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight>
 where GetKeyLeft: Fn(&Left) -> KeyLeft,
       GetKeyRight: Fn(&Right) -> KeyRight,
       KeyLeft: Ord + PartialOrd<KeyRight>,
@@ -74,7 +83,8 @@ where GetKeyLeft: Fn(&Left) -> KeyLeft,
         (self.get_key_right)(a).cmp(&(self.get_key_right)(b))
     }
 }
-impl<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight> HashJoinDefinition for EquiJoin<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight>
+
+impl<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight> HashPredicate for EquiJoin<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight>
 where GetKeyLeft: Fn(&Left) -> KeyLeft,
       GetKeyRight: Fn(&Right) -> KeyRight,
       KeyLeft: PartialEq<KeyRight> + Hash,

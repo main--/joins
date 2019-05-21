@@ -7,8 +7,8 @@ use futures::{Future, Stream, Async, stream};
 use named_type::NamedType;
 
 
-mod definition;
-use definition::*;
+mod predicate;
+use predicate::*;
 mod join;
 use join::*;
 
@@ -36,7 +36,7 @@ existential type BenchSource<T>: Stream<Item=T, Error=()>;
 fn bencher<J, L: Debug, R: Debug, D>(data_left: Vec<L>, data_right: Vec<R>, definition: D)
 where
     J: Join<BenchSource<L>, BenchSource<R>, D> + NamedType,
-    D: JoinDefinition<Left=L, Right=R>,
+    D: JoinPredicate<Left=L, Right=R>,
     D::Output: Debug {
     let tuples_read = Rc::new(Cell::new(0));
 
@@ -57,7 +57,7 @@ where
 
 fn bench_all<L: Debug + Clone, R: Debug + Clone, D>(data_left: Vec<L>, data_right: Vec<R>, definition: D)
 where
-    D: JoinDefinition<Left=L, Right=R> + HashJoinDefinition + OrdJoinDefinition + Clone,
+    D: JoinPredicate<Left=L, Right=R> + HashPredicate + MergePredicate + Clone,
     D::Output: Debug {
     bencher::<OrderedMergeJoin<_, _, _>, _, _, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<SortMergeJoin<_, _, _>, _, _, _>(data_left.clone(), data_right.clone(), definition.clone());

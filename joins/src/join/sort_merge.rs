@@ -4,7 +4,7 @@ use named_type::NamedType;
 use named_type_derive::*;
 
 use super::{Join, OrderedMergeJoin};
-use crate::definition::OrdJoinDefinition;
+use crate::predicate::MergePredicate;
 
 #[derive(NamedType)]
 pub enum SortMergeJoin<L: Stream, R: Stream, D> {
@@ -24,7 +24,7 @@ impl<L, R, D> Stream for SortMergeJoin<L, R, D>
           R: Stream<Error=L::Error>,
           L::Item: Clone + Debug,
           R::Item: Clone + Debug,
-          D: OrdJoinDefinition<Left=L::Item, Right=R::Item> {
+          D: MergePredicate<Left=L::Item, Right=R::Item> {
     type Item = D::Output;
     type Error = L::Error;
 
@@ -69,7 +69,7 @@ impl<L, R, D> Join<L, R, D> for SortMergeJoin<L, R, D>
           R: Stream<Error=L::Error>,
           L::Item: Clone + Debug,
           R::Item: Clone + Debug,
-          D: OrdJoinDefinition<Left=L::Item, Right=R::Item> {
+          D: MergePredicate<Left=L::Item, Right=R::Item> {
     fn build(left: L, right: R, definition: D) -> Self {
         SortMergeJoin::InputPhase { left: left.fuse(), right: right.fuse(), left_buf: Vec::new(), right_buf: Vec::new(), definition }
     }

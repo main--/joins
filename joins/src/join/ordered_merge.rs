@@ -5,7 +5,7 @@ use named_type::NamedType;
 use named_type_derive::*;
 
 use super::Join;
-use crate::definition::OrdJoinDefinition;
+use crate::predicate::MergePredicate;
 
 #[derive(NamedType)]
 pub struct OrderedMergeJoin<L: Stream, R: Stream, D> {
@@ -22,7 +22,7 @@ impl<L, R, D> Stream for OrderedMergeJoin<L, R, D>
           R: Stream<Error=L::Error>,
           L::Item: Clone + Debug,
           R::Item: Clone + Debug,
-          D: OrdJoinDefinition<Left=L::Item, Right=R::Item> {
+          D: MergePredicate<Left=L::Item, Right=R::Item> {
     type Item = D::Output;
     type Error = L::Error;
 
@@ -98,7 +98,7 @@ impl<L, R, D> Join<L, R, D> for OrderedMergeJoin<L, R, D>
           R: Stream<Error=L::Error>,
           L::Item: Clone + Debug,
           R::Item: Clone + Debug,
-          D: OrdJoinDefinition<Left=L::Item, Right=R::Item> {
+          D: MergePredicate<Left=L::Item, Right=R::Item> {
     fn build(left: L, right: R, definition: D) -> Self {
         OrderedMergeJoin { left: left.peekable(), right: right.peekable(), definition, eq_buffer: Vec::new(), eq_cursor: 0, replay_mode: false }
     }
