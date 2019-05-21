@@ -90,11 +90,11 @@ impl<L, R, D> Stream for OrderedMergeJoin<L, R, D>
 }
 
 
-impl<L, R, D> Join<L, R, D> for OrderedMergeJoin<L, R, D>
+impl<L, R, D, E> Join<L, R, D, E> for OrderedMergeJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
           D: MergePredicate<Left=L::Item, Right=R::Item> {
-    fn build(left: L, right: R, definition: D) -> Self {
+    fn build(left: L, right: R, definition: D, _: E) -> Self {
         OrderedMergeJoin { left: left.peekable(), right: right.peekable(), definition, eq_buffer: Vec::new(), eq_cursor: 0, replay_mode: false }
     }
 }

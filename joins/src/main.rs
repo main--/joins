@@ -12,11 +12,11 @@ use predicate::*;
 mod join;
 use join::*;
 
-trait ExternalStorage<T> {
+pub trait ExternalStorage<T> {
     type External: External<T>;
     fn store(&mut self, tuples: Vec<T>) -> Self::External;
 }
-trait External<T> {
+pub trait External<T> {
     type Iter: Iterator<Item=T>;
     fn fetch(&self) -> Self::Iter;
 }
@@ -100,6 +100,11 @@ impl IoSimulator {
         }
     }
     fn notify_disk_io(&mut self, amount: usize) {
+        if self.disk_ops_per_refill == 0 {
+            // disabled - never refill for disk IO
+            return;
+        }
+
         let refills = (amount + (self.disk_ops_count % self.disk_ops_per_refill)) / self.disk_ops_per_refill;
         for _ in 0..refills {
             self.add_input_budget();
@@ -152,7 +157,7 @@ existential type BenchSource<T>: Stream<Item=T, Error=()>;
 
 fn bencher<J, D>(data_left: Vec<D::Left>, data_right: Vec<D::Right>, definition: D)
 where
-    J: Join<BenchSource<D::Left>, BenchSource<D::Right>, D> + NamedType,
+    J: Join<BenchSource<D::Left>, BenchSource<D::Right>, D, BenchStorage> + NamedType,
     D: JoinPredicate,
     D::Output: Debug {
     let simulator = IoSimulator::new();
@@ -161,7 +166,7 @@ where
     let left = bench_source(data_left, &simulator, Side::Left);
     let right = bench_source(data_right, &simulator, Side::Right);
 
-    let join = J::build(left, right, definition);
+    let join = J::build(left, right, definition, BenchStorage(Rc::clone(&simulator)));
 
     let mut timings = Vec::new();
     let timed = join.inspect(|_| timings.push(simulator.borrow().read_tuple_count));
@@ -186,7 +191,7 @@ where
     D::Right: Clone,
     D::Output: Debug {
     bencher::<OrderedMergeJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
-    bencher::<SortMergeJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
+    bencher::<SortMergeJoin<_, _, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<SimpleHashJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<SymmetricHashJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
 }

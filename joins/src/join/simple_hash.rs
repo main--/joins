@@ -51,14 +51,12 @@ impl<L, R, D> Stream for SimpleHashJoin<L, R, D>
         Ok(Async::Ready(None))
     }
 }
-impl<L, R, D> Join<L, R, D> for SimpleHashJoin<L, R, D>
+impl<L, R, D, E> Join<L, R, D, E> for SimpleHashJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
           D: HashPredicate<Left=L::Item, Right=R::Item> {
-    fn build(left: L, right: R, definition: D) -> Self {
+    fn build(left: L, right: R, definition: D, _: E) -> Self {
         SimpleHashJoin { definition, left: left.fuse(), right, table: MultiMap::new(), output_buffer: VecDeque::new() }
     }
 }
-
-
 
