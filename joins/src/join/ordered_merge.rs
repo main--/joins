@@ -27,6 +27,7 @@ impl<L, R, D> Stream for OrderedMergeJoin<L, R, D>
         let mut ret = None;
         while ret.is_none() {
             let order = {
+                let right = try_ready!(self.right.peek());
                 let left = if self.replay_mode {
                     let x = &self.eq_buffer[self.eq_cursor];
                     self.eq_cursor += 1;
@@ -34,7 +35,6 @@ impl<L, R, D> Stream for OrderedMergeJoin<L, R, D>
                 } else {
                     try_ready!(self.left.peek())
                 };
-                let right = try_ready!(self.right.peek());
                 //println!("matching {:?} vs {:?}", left, right);
                 match (left, right) {
                     (Some(l), Some(r)) => {
