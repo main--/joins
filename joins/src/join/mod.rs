@@ -2,6 +2,8 @@ use futures::Stream;
 
 mod nested_loop;
 pub use self::nested_loop::NestedLoopJoin;
+mod block_nested_loop;
+pub use self::block_nested_loop::BlockNestedLoopJoin;
 mod ordered_merge;
 pub use self::ordered_merge::OrderedMergeJoin;
 mod sort_merge;

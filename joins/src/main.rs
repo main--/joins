@@ -219,6 +219,7 @@ where
     D::Right: Clone,
     D::Output: Debug {
     bencher::<NestedLoopJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
+    bencher::<BlockNestedLoopJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<OrderedMergeJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<SortMergeJoin<_, _, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<SimpleHashJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
