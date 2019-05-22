@@ -17,7 +17,9 @@
 //!   which only invokes the join predicate `O(n log(n))` times.
 //! * Implementing the `HashPredicate` trait allows the join implementation to restrict join
 //!   partners using a hash value. In a theoretical best case, a hash join only needs to
-//!   invoke the join predicate `O(n)` times.
+//!   invoke the join predicate `o(n)` times.
+//!   Note that this depends entirely on the hash function and the actual data - in the worst
+//!   case where every single tuple happens to hash to the same value this is still `O(n²)`.
 
 use std::cmp::Ordering;
 use std::rc::Rc;

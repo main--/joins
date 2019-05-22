@@ -13,7 +13,7 @@ use super::*;
 /// That's what this type is for.
 ///
 /// It joins tuples by a **key** which is specified using closures.
-/// It returns `(left, right)` for tuples equal keys.
+/// It returns `(left, right)` for tuples with equal keys.
 ///
 /// # Example
 ///
