@@ -143,23 +143,50 @@ impl<T: Stream> Stream for TupleInputThrottle<T> {
         }
     }
 }
+impl<T: Rescan> Rescan for TupleInputThrottle<T> {
+    fn rescan(&mut self) {
+        self.underlying.rescan();
+    }
+}
+#[derive(Debug)]
+pub struct IterVec<T> {
+    data: Vec<T>,
+    index: usize,
+}
+impl<T: Clone> Stream for IterVec<T> {
+    type Item = T;
+    type Error = ();
+    
+    fn poll(&mut self) -> Poll<Option<T>, ()> {
+        let index = self.index;
+        self.index = index + 1;
+        Ok(Async::Ready(self.data.get(index).map(Clone::clone)))
+    }
+}
+impl<T: Clone> Rescan for IterVec<T> {
+    fn rescan(&mut self) {
+        self.index = 0;
+    }
+}
 
-
-fn bench_source<T>(data: Vec<T>, simulator: &Rc<RefCell<IoSimulator>>, side: Side) -> BenchSource<T> {
+fn bench_source<T: Clone>(data: Vec<T>, simulator: &Rc<RefCell<IoSimulator>>, side: Side) -> BenchSource<T> {
     let rc = Rc::clone(&simulator);
     TupleInputThrottle {
-        underlying: stream::iter_ok::<_, ()>(data),
+        underlying: IterVec { data, index: 0 },
         side,
         simulator: rc,
     }
 }
 
-existential type BenchSource<T>: Stream<Item=T, Error=()>;
+// TODO: delet this
+existential type BenchSource<T>: Stream<Item=T, Error=()> + Rescan;
 
 fn bencher<J, D>(data_left: Vec<D::Left>, data_right: Vec<D::Right>, definition: D)
 where
     J: Join<BenchSource<D::Left>, BenchSource<D::Right>, D, BenchStorage> + NamedType,
     D: JoinPredicate,
+    D::Left: Clone,
+    D::Right: Clone,
     D::Output: Debug {
     let simulator = IoSimulator::new();
     simulator.borrow_mut().right_to_left = Fraction::new(2usize, 1usize);
@@ -191,6 +218,7 @@ where
     D::Left: Clone,
     D::Right: Clone,
     D::Output: Debug {
+    bencher::<NestedLoopJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<OrderedMergeJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<SortMergeJoin<_, _, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<SimpleHashJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
