@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use futures::{Stream, Poll, try_ready, Async, stream};
 use named_type::NamedType;
 use named_type_derive::*;

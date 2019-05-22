@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::collections::VecDeque;
 use futures::{Stream, Poll, try_ready, Async, stream};
 use named_type::NamedType;
@@ -31,21 +30,14 @@ impl<L, R, D> Stream for BlockNestedLoopJoin<L, R, D>
                 if let Some(left) =  try_ready!(self.left.poll()) {
                     self.buffer.push(left);
                 }
+            } else if let Some(right) = try_ready!(self.right.poll()) {
+                let definition = &self.definition;
+                self.output_buffer.extend(self.buffer.iter().filter_map(|l| definition.eq(l, &right)));
+            } else if self.left.is_done() {
+                return Ok(Async::Ready(None));
             } else {
-                match try_ready!(self.right.poll()) {
-                    None => {
-                        if self.left.is_done() {
-                            return Ok(Async::Ready(None));
-                        } else {
-                            self.buffer.clear();
-                            self.right.rescan();
-                        }
-                    }
-                    Some(right) => {
-                        let definition = &self.definition;
-                        self.output_buffer.extend(self.buffer.iter().filter_map(|l| definition.eq(l, &right)));
-                    }
-                }
+                self.buffer.clear();
+                self.right.rescan();
             }
         }
     }

@@ -68,7 +68,7 @@ impl<T, E: External<T>, C: Compare<T>> Stream for SortMerger<T, E, C> {
         let sort = &self.sort;
         Ok(Async::Ready(match self.ways.iter_mut().enumerate().filter_map(|(i, x)| x.peek().map(|x| (i, x))).minmax_by(|(_, a), (_, b)| sort.cmp(a, b)) {
             MinMaxResult::NoElements => None,
-            MinMaxResult::OneElement((i, x)) | MinMaxResult::MinMax((i, x), _) => {
+            MinMaxResult::OneElement((i, _)) | MinMaxResult::MinMax((i, _), _) => {
                 Some(self.ways[i].next().unwrap())
             }
         }))
@@ -125,7 +125,7 @@ impl<L, R, D, E> Stream for SortMergeJoin<L, R, D, E>
             }
 
             *self = match std::mem::replace(self, SortMergeJoin::Tmp) {
-                SortMergeJoin::InputPhase { mut left_buf, mut right_buf, definition, mut storage, buf_limit, mut left_blocks, mut right_blocks, .. } => {
+                SortMergeJoin::InputPhase { mut left_buf, mut right_buf, definition, mut storage, mut left_blocks, mut right_blocks, .. } => {
                     manage_buf(Async::NotReady, &mut left_buf, 0, &mut storage, &mut left_blocks, |a, b| definition.cmp_left(a, b));
                     manage_buf(Async::NotReady, &mut right_buf, 0, &mut storage, &mut right_blocks, |a, b| definition.cmp_right(a, b));
                     assert!(left_buf.is_empty());
