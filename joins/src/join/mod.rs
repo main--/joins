@@ -15,6 +15,8 @@ mod symmetric_hash;
 pub use self::symmetric_hash::SymmetricHashJoin;
 mod progressive_merge;
 pub use self::progressive_merge::ProgressiveMergeJoin;
+mod xjoin;
+pub use self::xjoin::XJoin;
 
 
 use crate::predicate::JoinPredicate;
