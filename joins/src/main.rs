@@ -87,7 +87,7 @@ impl IoSimulator {
         if *budget >= one {
             *budget -= one;
             self.read_tuple_count += 1;
-            //println!("read tuple {:?}", side);
+            println!("read tuple {:?}", side);
             true
         } else {
             false
@@ -115,7 +115,7 @@ impl IoSimulator {
         Rc::new(RefCell::new(IoSimulator {
             right_to_left: Fraction::from(1),
             input_batch_size: Fraction::from(1),
-            disk_ops_per_refill: 0, // not implemented
+            disk_ops_per_refill: 0,
 
             left_budget: Fraction::neg_zero(),
             right_budget: Fraction::neg_zero(),
@@ -192,6 +192,8 @@ where
     J::Error: Debug {
     let simulator = IoSimulator::new();
     simulator.borrow_mut().right_to_left = Fraction::new(2usize, 1usize);
+    //simulator.borrow_mut().input_batch_size = Fraction::new(1000usize ,1usize);
+    simulator.borrow_mut().disk_ops_per_refill = 10;
 
     let left = bench_source(data_left, &simulator, Side::Left);
     let right = bench_source(data_right, &simulator, Side::Right);
@@ -236,7 +238,7 @@ where
 }
 
 fn main() {
-    //let left_sorted: Vec<i32> = vec![0,0,0,0,0];
+    //let left_sorted: Vec<i32> = vec![0, 0,0,0,0, 0];
     //let right_sorted: Vec<i32> = vec![0,0,0,0,0];
     let left_sorted: Vec<i32> = vec![1,3,3,3,3,3,3,3,3,4,7,18];
     let right_sorted: Vec<i32> = vec![0, 1, 3, 3,3,7,42,45];
