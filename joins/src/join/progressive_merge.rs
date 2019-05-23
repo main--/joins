@@ -39,10 +39,12 @@ pub enum ProgressiveMergeJoin<L, R, D, E>
     InputPhase(InputPhase<L, R, D, E>),
     OutputPhase {
         output_buffer: VecDeque<D::Output>,
-        omj: OrderedMergeJoin<SortMerger<L::Item, <E as ExternalStorage<L::Item>>::External, CmpLeft<Rc<D>>>, SortMerger<R::Item, <E as ExternalStorage<R::Item>>::External, CmpRight<Rc<D>>>, IgnoreIndexPredicate<Rc<D>>>,
+        omj: OrderedMergeJoin<Merger<L, E, CmpLeft<Rc<D>>>, Merger<R, E, CmpRight<Rc<D>>>, IgnoreIndexPredicate<Rc<D>>>,
     },
     Tmp,
 }
+type Merger<S, E, C> = SortMerger<<S as Stream>::Item, <E as ExternalStorage<<S as Stream>::Item>>::External, C>;
+
 impl<L, R, D, E> InputPhase<L, R, D, E>
     where L: Stream,
           R: Stream<Error=L::Error> + Rescan,
