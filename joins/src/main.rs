@@ -17,7 +17,7 @@ pub struct BenchStorage(Rc<RefCell<IoSimulator>>);
 impl<T: Clone> ExternalStorage<T> for BenchStorage {
     type External = BenchExternal<T>;
     fn store(&mut self, tuples: Vec<T>) -> BenchExternal<T> {
-        self.0.borrow_mut().notify_disk_io(tuples.len());
+        self.0.borrow_mut().notify_disk_io(tuples.len(), true);
         BenchExternal(Rc::new(tuples), Rc::clone(&self.0))
     }
 }
@@ -42,7 +42,7 @@ impl<T: Clone> Iterator for BenchIter<T> {
 
     fn next(&mut self) -> Option<T> {
         self.data.get(self.index).map(Clone::clone).map(|x| {
-            self.sim.borrow_mut().notify_disk_io(1);
+            self.sim.borrow_mut().notify_disk_io(1, false);
             self.index += 1;
             x
         })
@@ -68,6 +68,9 @@ struct IoSimulator {
 
     read_tuple_count: usize,
     disk_ops_count: usize,
+
+    disk_ops_out: usize,
+    disk_ops_in: usize,
 }
 impl IoSimulator {
     fn add_input_budget(&mut self) {
@@ -90,10 +93,14 @@ impl IoSimulator {
             false
         }
     }
-    fn notify_disk_io(&mut self, amount: usize) {
+    fn notify_disk_io(&mut self, amount: usize, out: bool) {
+        if out {
+            self.disk_ops_out += amount;
+        } else {
+            self.disk_ops_in += amount;
+        }
         if self.disk_ops_per_refill == 0 {
             // disabled - never refill for disk IO
-            self.disk_ops_count += amount;
             return;
         }
 
@@ -114,6 +121,9 @@ impl IoSimulator {
             right_budget: Fraction::neg_zero(),
             read_tuple_count: 0,
             disk_ops_count: 0,
+
+            disk_ops_out: 0,
+            disk_ops_in: 0,
         }))
     }
 }
@@ -189,7 +199,7 @@ where
     let join = J::build(left, right, definition, BenchStorage(Rc::clone(&simulator)), 6);
 
     let mut timings = Vec::new();
-    let timed = join.inspect(|_| timings.push((simulator.borrow().read_tuple_count, simulator.borrow().disk_ops_count)));
+    let timed = join.inspect(|_| timings.push((simulator.borrow().read_tuple_count, simulator.borrow().disk_ops_out, simulator.borrow().disk_ops_in)));
 
     let mut collector = timed.collect();
     loop {

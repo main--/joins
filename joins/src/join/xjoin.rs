@@ -125,7 +125,7 @@ impl<L, R, D, E> MainPhase<L, R, D, E>
             let definition = Rc::clone(&definition);
             right.flat_map(move |r| {
                 let hash = definition.hash_right(&r.item);
-                let matches: Vec<_> = table.get_vec(&hash).into_iter().flat_map(|l| l.iter()).flat_map(|l| {
+                table.get_vec(&hash).into_iter().flat_map(|l| l.iter()).flat_map(|l| {
                     // did we join these already?
                     if (l.t_in <= r.t_out) && (l.t_out > r.t_in) {
                         println!("rejecting {:?} ({}, {}) {:?} ({}, {})", l.item.debug(), l.t_in, l.t_out, r.item.debug(), r.t_in, r.t_out);
@@ -133,8 +133,7 @@ impl<L, R, D, E> MainPhase<L, R, D, E>
                     }
                     
                     definition.eq(&l.item, &r.item)
-                }).collect();
-                matches.into_iter()
+                }).collect::<Vec<_>>().into_iter()
             })
         })
     }
