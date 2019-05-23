@@ -8,6 +8,9 @@ use named_type_derive::*;
 use super::Join;
 use crate::predicate::MergePredicate;
 
+// TODO: make this a proper plane-sweep merge in order to exploit speed difference between left and right sources
+//       (implement sweep area from progressive merge join paper)
+
 #[derive(NamedType)]
 pub struct OrderedMergeJoin<L: Stream, R: Stream, D> {
     left: stream::Peekable<L>,

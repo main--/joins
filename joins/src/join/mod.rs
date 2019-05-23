@@ -23,7 +23,7 @@ pub trait Rescan: Stream {
     fn rescan(&mut self);
 }
 
-pub trait Join<Left, Right, Definition, ExtStorage>: Stream<Item=Definition::Output, Error=Left::Error>
+pub trait Join<Left, Right, Definition, ExtStorage>: Stream<Item=Definition::Output>
     where Left: Stream,
           Right: Stream<Error=Left::Error>,
           Left::Item: Borrow<Definition::Left>,

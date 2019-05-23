@@ -178,7 +178,8 @@ where
     D: JoinPredicate,
     D::Left: Clone,
     D::Right: Clone,
-    D::Output: Debug {
+    D::Output: Debug,
+    J::Error: Debug {
     let simulator = IoSimulator::new();
     simulator.borrow_mut().right_to_left = Fraction::new(2usize, 1usize);
 
@@ -192,12 +193,16 @@ where
 
     let mut collector = timed.collect();
     loop {
-        match collector.poll().unwrap() {
-            Async::Ready(result) => {
+        match collector.poll() {
+            Ok(Async::Ready(result)) => {
                 println!("result {:?} ({} items)", result, result.len());
                 break;
             }
-            Async::NotReady => simulator.borrow_mut().add_input_budget(),
+            Ok(Async::NotReady) => simulator.borrow_mut().add_input_budget(),
+            Err(e) => {
+                println!("{} error: {:?}", J::short_type_name(), e);
+                return;
+            }
         }
     }
     println!("timings {}: {:?}", J::short_type_name(), timings);
@@ -214,9 +219,9 @@ where
     bencher::<OrderedMergeJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<SortMergeJoin<_, _, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<SimpleHashJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
-    // TODO: SymmetricHashJoin does not simulate external storage properly, excluded from benchmarks for now
-    // bencher::<SymmetricHashJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
+    bencher::<SymmetricHashJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<ProgressiveMergeJoin<_, _, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
+    // TODO: hybrid hash join
 }
 
 fn main() {
