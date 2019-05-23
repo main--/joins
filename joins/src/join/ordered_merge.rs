@@ -1,3 +1,5 @@
+use debug_everything::Debuggable;
+use std::borrow::Borrow;
 use std::cmp::Ordering;
 use futures::{Stream, Poll, try_ready, Async, stream};
 use named_type::NamedType;
@@ -19,7 +21,9 @@ pub struct OrderedMergeJoin<L: Stream, R: Stream, D> {
 impl<L, R, D> Stream for OrderedMergeJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          D: MergePredicate<Left=L::Item, Right=R::Item> {
+          L::Item: Borrow<D::Left>,
+          R::Item: Borrow<D::Right>,
+          D: MergePredicate {
     type Item = D::Output;
     type Error = L::Error;
 
@@ -35,12 +39,13 @@ impl<L, R, D> Stream for OrderedMergeJoin<L, R, D>
                 } else {
                     try_ready!(self.left.peek())
                 };
-                //println!("matching {:?} vs {:?}", left, right);
+                println!("matching {:?} vs {:?}", left.debug(), right.debug());
                 match (left, right) {
                     (Some(l), Some(r)) => {
-                        ret = self.definition.eq(l, r);
-                        self.definition.cmp(l, r).unwrap()
+                        ret = self.definition.eq(l.borrow(), r.borrow());
+                        self.definition.cmp(l.borrow(), r.borrow()).unwrap()
                     }
+                    (None, _) if !self.eq_buffer.is_empty() => Ordering::Greater,
                     _ => break,
                 }
             };
@@ -93,7 +98,9 @@ impl<L, R, D> Stream for OrderedMergeJoin<L, R, D>
 impl<L, R, D> OrderedMergeJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          D: MergePredicate<Left=L::Item, Right=R::Item> {
+          L::Item: Borrow<D::Left>,
+          R::Item: Borrow<D::Right>,
+          D: MergePredicate {
     pub fn new(left: L, right: R, definition: D) -> Self {
         OrderedMergeJoin { left: left.peekable(), right: right.peekable(), definition, eq_buffer: Vec::new(), eq_cursor: 0, replay_mode: false }
     }
@@ -102,7 +109,9 @@ impl<L, R, D> OrderedMergeJoin<L, R, D>
 impl<L, R, D, E> Join<L, R, D, E> for OrderedMergeJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          D: MergePredicate<Left=L::Item, Right=R::Item> {
+          L::Item: Borrow<D::Left>,
+          R::Item: Borrow<D::Right>,
+          D: MergePredicate {
     fn build(left: L, right: R, definition: D, _: E, _: usize) -> Self {
         OrderedMergeJoin::new(left, right, definition)
     }

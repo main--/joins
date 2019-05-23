@@ -3,7 +3,7 @@
 use std::fmt::Debug;
 use std::rc::Rc;
 use std::cell::RefCell;
-use futures::{Future, Stream, Async, stream, Poll};
+use futures::{Future, Stream, Async, Poll};
 use named_type::NamedType;
 
 
@@ -11,15 +11,6 @@ mod predicate;
 use predicate::*;
 mod join;
 use join::*;
-
-pub trait ExternalStorage<T> {
-    type External: External<T>;
-    fn store(&mut self, tuples: Vec<T>) -> Self::External;
-}
-pub trait External<T> {
-    type Iter: Iterator<Item=T>;
-    fn fetch(&self) -> Self::Iter;
-}
 
 
 pub struct BenchStorage(Rc<RefCell<IoSimulator>>);
@@ -93,7 +84,7 @@ impl IoSimulator {
         if *budget >= one {
             *budget -= one;
             self.read_tuple_count += 1;
-            println!("read tuple {:?}", side);
+            //println!("read tuple {:?}", side);
             true
         } else {
             false
@@ -194,7 +185,7 @@ where
     let left = bench_source(data_left, &simulator, Side::Left);
     let right = bench_source(data_right, &simulator, Side::Right);
 
-    let join = J::build(left, right, definition, BenchStorage(Rc::clone(&simulator)), 10);
+    let join = J::build(left, right, definition, BenchStorage(Rc::clone(&simulator)), 2);
 
     let mut timings = Vec::new();
     let timed = join.inspect(|_| timings.push((simulator.borrow().read_tuple_count, simulator.borrow().disk_ops_count)));
@@ -203,7 +194,7 @@ where
     loop {
         match collector.poll().unwrap() {
             Async::Ready(result) => {
-                println!("result {:?}", result);
+                println!("result {:?} ({} items)", result, result.len());
                 break;
             }
             Async::NotReady => simulator.borrow_mut().add_input_budget(),
@@ -215,18 +206,22 @@ where
 fn bench_all<D>(data_left: Vec<D::Left>, data_right: Vec<D::Right>, definition: D)
 where
     D: HashPredicate + MergePredicate + Clone,
-    D::Left: Clone,
-    D::Right: Clone,
+    D::Left: Clone + Debug,
+    D::Right: Clone + Debug,
     D::Output: Debug {
     bencher::<NestedLoopJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<BlockNestedLoopJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<OrderedMergeJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<SortMergeJoin<_, _, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<SimpleHashJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
-    bencher::<SymmetricHashJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
+    // TODO: SymmetricHashJoin does not simulate external storage properly, excluded from benchmarks for now
+    // bencher::<SymmetricHashJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
+    bencher::<ProgressiveMergeJoin<_, _, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
 }
 
 fn main() {
+    //let left_sorted: Vec<i32> = vec![0,0,0,0,0];
+    //let right_sorted: Vec<i32> = vec![0,0,0,0,0];
     let left_sorted: Vec<i32> = vec![1,3,3,3,3,3,3,3,3,4,7,18];
     let right_sorted: Vec<i32> = vec![0, 1, 3, 3,3,7,42,45];
     let definition = EquiJoin::new(|&x| x, |&x| x);

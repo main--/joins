@@ -37,22 +37,19 @@ impl<L, R, D> Stream for SymmetricHashJoin<L, R, D>
                 (Async::Ready(None), Async::Ready(None)) => return Ok(Async::Ready(None)),
                 (Async::NotReady, Async::NotReady) | (Async::Ready(None), Async::NotReady) | (Async::NotReady, Async::Ready(None)) => return Ok(Async::NotReady),
                 (l, r) => {
+                    let definition = &self.definition;
                     if let Async::Ready(Some(l)) = l {
-                        let hash = self.definition.hash_left(&l);
-                        for candidate in self.table_right.get_vec(&hash).into_iter().flatten() {
-                            if let Some(x) = self.definition.eq(&l, candidate) {
-                                self.output_buffer.push_back(x);
-                            }
-                        }
+                        let hash = definition.hash_left(&l);
+                        self.output_buffer.extend(
+                            self.table_right.get_vec(&hash).into_iter().flatten()
+                                .filter_map(|r| definition.eq(&l, r)));
                         self.table_left.insert(hash, l);
                     }
                     if let Async::Ready(Some(r)) = r {
-                        let hash = self.definition.hash_right(&r);
-                        for candidate in self.table_left.get_vec(&hash).into_iter().flatten() {
-                            if let Some(x) = self.definition.eq(candidate, &r) {
-                                self.output_buffer.push_back(x);
-                            }
-                        }
+                        let hash = definition.hash_right(&r);
+                        self.output_buffer.extend(
+                            self.table_left.get_vec(&hash).into_iter().flatten()
+                                .filter_map(|l| definition.eq(l, &r)));
                         self.table_right.insert(hash, r);
                     }
                 }

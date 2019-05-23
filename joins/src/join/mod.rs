@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use futures::Stream;
 
 mod nested_loop;
@@ -12,6 +13,8 @@ mod simple_hash;
 pub use self::simple_hash::SimpleHashJoin;
 mod symmetric_hash;
 pub use self::symmetric_hash::SymmetricHashJoin;
+mod progressive_merge;
+pub use self::progressive_merge::ProgressiveMergeJoin;
 
 
 use crate::predicate::JoinPredicate;
@@ -23,12 +26,23 @@ pub trait Rescan: Stream {
 pub trait Join<Left, Right, Definition, ExtStorage>: Stream<Item=Definition::Output, Error=Left::Error>
     where Left: Stream,
           Right: Stream<Error=Left::Error>,
-          Definition: JoinPredicate<Left=Left::Item, Right=Right::Item> {
+          Left::Item: Borrow<Definition::Left>,
+          Right::Item: Borrow<Definition::Right>,
+          Definition: JoinPredicate {
     fn build(
         left: Left,
         right: Right,
         definition: Definition,
         storage: ExtStorage,
         main_memory: usize) -> Self;
+}
+
+pub trait ExternalStorage<T> {
+    type External: External<T>;
+    fn store(&mut self, tuples: Vec<T>) -> Self::External;
+}
+pub trait External<T> {
+    type Iter: Iterator<Item=T>;
+    fn fetch(&self) -> Self::Iter;
 }
 

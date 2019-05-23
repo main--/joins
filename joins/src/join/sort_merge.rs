@@ -6,9 +6,8 @@ use named_type::NamedType;
 use named_type_derive::*;
 use itertools::{Itertools, MinMaxResult};
 
-use super::{Join, OrderedMergeJoin};
+use super::{Join, OrderedMergeJoin, External, ExternalStorage};
 use crate::predicate::MergePredicate;
-use crate::{External, ExternalStorage};
 
 #[derive(NamedType)]
 pub enum SortMergeJoin<L: Stream, R: Stream, D: MergePredicate<Left=L::Item, Right=R::Item>, E>
@@ -26,21 +25,26 @@ pub enum SortMergeJoin<L: Stream, R: Stream, D: MergePredicate<Left=L::Item, Rig
         left_blocks: Vec<<E as ExternalStorage<L::Item>>::External>,
         right_blocks: Vec<<E as ExternalStorage<R::Item>>::External>,
     },
-    OutputPhase(OrderedMergeJoin<SortMerger<L::Item, <E as ExternalStorage<L::Item>>::External, CmpLeft<Rc<D>>>, SortMerger<R::Item, <E as ExternalStorage<R::Item>>::External, CmpRight<Rc<D>>>, Rc<D>>),
+    OutputPhase(OrderedMergeJoin<SortMergerNoIndex<L::Item, SortMerger<L::Item, <E as ExternalStorage<L::Item>>::External, CmpLeft<Rc<D>>>>, SortMergerNoIndex<R::Item, SortMerger<R::Item, <E as ExternalStorage<R::Item>>::External, CmpRight<Rc<D>>>>, Rc<D>>),
     Tmp,
 }
+
+fn without_index<T, S: Stream<Item=(usize, T), Error=()>>(s: S) -> SortMergerNoIndex<T, S> {
+    s.map(|(_, x)| x)
+}
+existential type SortMergerNoIndex<T, S>: Stream<Item=T, Error=()>;
 
 pub trait Compare<T> {
     fn cmp(&self, a: &T, b: &T) -> Ordering;
 }
 
-pub struct CmpLeft<D>(D);
+pub struct CmpLeft<D>(pub D);
 impl<D: MergePredicate> Compare<D::Left> for CmpLeft<D> {
     fn cmp(&self, a: &D::Left, b: &D::Left) -> Ordering {
         self.0.cmp_left(a, b)
     }
 }
-pub struct CmpRight<D>(D);
+pub struct CmpRight<D>(pub D);
 impl<D: MergePredicate> Compare<D::Right> for CmpRight<D> {
     fn cmp(&self, a: &D::Right, b: &D::Right) -> Ordering {
         self.0.cmp_right(a, b)
@@ -53,7 +57,7 @@ pub struct SortMerger<T, E: External<T>, C> {
     sort: C,
 }
 impl<T, E: External<T>, C> SortMerger<T, E, C> {
-    fn new(e: Vec<E>, c: C) -> Self {
+    pub fn new(e: Vec<E>, c: C) -> Self {
         SortMerger {
             ways: e.into_iter().map(|x| x.fetch().peekable()).collect(),
             sort: c,
@@ -61,15 +65,15 @@ impl<T, E: External<T>, C> SortMerger<T, E, C> {
     }
 }
 impl<T, E: External<T>, C: Compare<T>> Stream for SortMerger<T, E, C> {
-    type Item = T;
+    type Item = (usize, T);
     type Error = ();
 
-    fn poll(&mut self) -> Poll<Option<T>, ()> {
+    fn poll(&mut self) -> Poll<Option<(usize, T)>, ()> {
         let sort = &self.sort;
         Ok(Async::Ready(match self.ways.iter_mut().enumerate().filter_map(|(i, x)| x.peek().map(|x| (i, x))).minmax_by(|(_, a), (_, b)| sort.cmp(a, b)) {
             MinMaxResult::NoElements => None,
             MinMaxResult::OneElement((i, _)) | MinMaxResult::MinMax((i, _), _) => {
-                Some(self.ways[i].next().unwrap())
+                Some((i, self.ways[i].next().unwrap()))
             }
         }))
     }
@@ -133,8 +137,8 @@ impl<L, R, D, E> Stream for SortMergeJoin<L, R, D, E>
 
                     let definition = Rc::new(definition);
 
-                    let left = SortMerger::new(left_blocks, CmpLeft(definition.clone()));
-                    let right = SortMerger::new(right_blocks, CmpRight(definition.clone()));
+                    let left = without_index(SortMerger::new(left_blocks, CmpLeft(definition.clone())));
+                    let right = without_index(SortMerger::new(right_blocks, CmpRight(definition.clone())));
 
                     SortMergeJoin::OutputPhase(OrderedMergeJoin::new(left, right, definition))
                 }

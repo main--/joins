@@ -37,11 +37,10 @@ impl<L, R, D> Stream for SimpleHashJoin<L, R, D>
                 }
             } else if let Some(right) = try_ready!(self.right.poll()) {
                 // probe phase
-                for candidate in self.table.get_vec(&self.definition.hash_right(&right)).into_iter().flatten() {
-                    if let Some(x) = self.definition.eq(candidate, &right) {
-                        self.output_buffer.push_back(x);
-                    }
-                }
+                let definition = &self.definition;
+                self.output_buffer.extend(
+                    self.table.get_vec(&definition.hash_right(&right)).into_iter()
+                        .flatten().filter_map(|left| definition.eq(left, &right)));
             } else if self.left.is_done() {
                 // all complete
                 return Ok(Async::Ready(None));
