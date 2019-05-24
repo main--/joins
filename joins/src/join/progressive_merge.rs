@@ -70,7 +70,7 @@ impl<L, R, D, E> InputPhase<L, R, D, E>
 }
 
 
-pub struct IgnoreIndexPredicate<P>(P);
+pub struct IgnoreIndexPredicate<P>(pub P);
 impl<P: JoinPredicate> JoinPredicate for IgnoreIndexPredicate<P> {
     type Left = (usize, P::Left);
     type Right = (usize, P::Right);

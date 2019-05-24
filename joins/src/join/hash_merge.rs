@@ -1,36 +1,201 @@
 use std::mem;
+use std::fmt::Debug;
 use std::rc::Rc;
 use std::collections::VecDeque;
-use futures::{Stream, Poll, Async, stream};
+use futures::{Future, Stream, Poll, Async, stream, try_ready};
 use named_type::NamedType;
 use named_type_derive::*;
 use itertools::{Itertools, MinMaxResult};
-use multimap::MultiMap;
 use debug_everything::Debuggable;
 
-use super::{Join, ExternalStorage, External};
-use crate::predicate::{JoinPredicate, HashPredicate};
+use super::{Join, ExternalStorage, OrderedMergeJoin};
+use super::sort_merge::{SortMerger, CmpLeft, CmpRight};
+use super::progressive_merge::IgnoreIndexPredicate;
+use crate::predicate::{JoinPredicate, HashPredicate, MergePredicate};
 
 #[derive(NamedType)]
-pub enum HashMergeJoin<L, R, D, E>
+pub struct HashMergeJoin<L, R, D, E>
     where
         L: Stream,
         R: Stream,
-        D: JoinPredicate,
+        D: MergePredicate<Left=L::Item, Right=R::Item>,
         E: ExternalStorage<L::Item> + ExternalStorage<R::Item> {
-    definition: D,
-    storage: E,
     left: stream::Fuse<L>,
     right: stream::Fuse<R>,
-    partitions_left: Vec<Partition<L::Item, E>>,
-    partitions_right: Vec<Partition<R::Item, E>>,
-    stage2_cursor: usize,
-    overflow_memory: usize,
-    memory_limit: usize,
-    timer: u64,
-    output_buffer: VecDeque<D::Output>,
+    parts_l: Partitions<L::Item, E>,
+    parts_r: Partitions<R::Item, E>,
+    definition: Rc<D>,
+    common: Common<D::Output, E>,
+
+    // is there currently a merge going on?
+    merge: Option<MergePhase<L, R, D, E>>,
+}
+type Merger<S, E, C> = ValueSink<SortMerger<<S as Stream>::Item, <E as ExternalStorage<<S as Stream>::Item>>::External, C>>;
+pub struct ValueSink<S: Stream> {
+    underlying: stream::Fuse<S>,
+    sink: futures::unsync::mpsc::UnboundedSender<Result<Rc<S::Item>, S::Error>>,
+}
+struct ValueSinkRecv<T, E> {
+    recv: futures::unsync::mpsc::UnboundedReceiver<Result<Rc<T>, E>>,
+}
+impl<T, E> ValueSinkRecv<T, E> {
+    fn unpack(self) -> Vec<T> where E: Debug {
+        match self.recv.map(|r| match Rc::try_unwrap(r.unwrap()) { Ok(x) => x, _ => unreachable!() }).collect().poll().unwrap() {
+            Async::Ready(v) => v,
+            Async::NotReady => unreachable!(),
+        }
+    }
+}
+impl<S: Stream> ValueSink<S> {
+    fn new(underlying: S) -> (Self, ValueSinkRecv<S::Item, S::Error>) {
+        let (send, recv) = futures::unsync::mpsc::unbounded();
+        (ValueSink { underlying: underlying.fuse(), sink: send }, ValueSinkRecv { recv })
+    }
+}
+impl<S: Stream> Stream for ValueSink<S> {
+    type Item = Rc<S::Item>;
+    type Error = S::Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, S::Error> {
+        Ok(Async::Ready(try_ready!(self.underlying.poll()).map(|x| {
+            let x = Rc::new(x);
+            self.sink.unbounded_send(Ok(Rc::clone(&x))).unwrap();
+            x
+        })))
+    }
+}
+impl<S: Stream> Drop for ValueSink<S> {
+    fn drop(&mut self) {
+        loop {
+            match self.poll() {
+                Ok(Async::Ready(None)) => break,
+                Ok(Async::Ready(Some(_))) => (),
+                Ok(Async::NotReady) => if !std::thread::panicking() { panic!("we lost"); },
+                Err(e) => drop(self.sink.unbounded_send(Err(e))),
+            }
+        }
+    }
 }
 
+pub struct MergePhase<L, R, D, E>
+    where
+        L: Stream,
+        R: Stream,
+        D: MergePredicate<Left=L::Item, Right=R::Item>,
+        E: ExternalStorage<L::Item> + ExternalStorage<R::Item> {
+    omj: OrderedMergeJoin<Merger<L, E, CmpLeft<Rc<D>>>, Merger<R, E, CmpRight<Rc<D>>>, IgnoreIndexPredicate<Rc<D>>>,
+    recv_left: ValueSinkRecv<(usize, L::Item), ()>,
+    recv_right: ValueSinkRecv<(usize, R::Item), ()>,
+    disk_partition: usize,
+}
+
+// TODO: self type, parameter system, etc etc
+trait FlushingPolicy {
+    fn flush(memory_tuples: &[PartitionStats]) -> usize;
+}
+struct FlushSmallest;
+impl FlushingPolicy for FlushSmallest {
+    fn flush(memory_tuples: &[PartitionStats]) -> usize {
+        //println!("eviction? {:?}", memory_tuples);
+        match memory_tuples.iter().enumerate().minmax_by_key(|(_, &PartitionStats { left, right })| if (left + right) == 0 { std::usize::MAX } else { left + right }) {
+            MinMaxResult::NoElements => unreachable!(),
+            MinMaxResult::OneElement((i, _)) | MinMaxResult::MinMax((i, _), _) => i,
+        }
+    }
+}
+
+#[derive(Default, Clone, Debug)]
+struct PartitionStats {
+    left: usize,
+    right: usize,
+}
+
+struct Common<O, E> {
+    storage: E,
+    total_inmemory: usize,
+    //memory_tuples: Vec<PartitionStats>,
+    memory_limit: usize,
+    output_buffer: VecDeque<O>,
+}
+
+struct Partitions<T, E: ExternalStorage<T>> {
+    mem: Vec<Vec<T>>,
+    in_memory_tuples: Vec<usize>,
+    disk: Vec<Vec<E::External>>,
+}
+impl<T, E: ExternalStorage<T>> Partitions<T, E> {
+    fn new(num_partitions: usize) -> Self {
+       let mut x = Partitions { mem: Vec::new(), disk: Vec::new(), in_memory_tuples: vec![0; num_partitions / PARTS_DISK_PER_MEM] };
+       x.mem.resize_with(num_partitions, Default::default);
+       x.disk.resize_with(num_partitions / PARTS_DISK_PER_MEM, Default::default);
+       x
+    }
+    fn evict<D: MergePredicate<Left=T>>(&mut self, partition_to_evict: usize, definition: &D, common: &mut Common<D::Output, E>) {
+        let mut eviction: Vec<_> = self.mem.iter_mut().enumerate()
+            .filter(|(i, _)| (i / PARTS_DISK_PER_MEM) == partition_to_evict)
+            .flat_map(|(_, x)| mem::replace(x, Vec::new())).collect();
+        //println!("evicting {} tuples", eviction.len());
+        eviction.sort_by(|a, b| definition.cmp_left(a, b));
+        common.total_inmemory -= eviction.len();
+        self.in_memory_tuples[partition_to_evict] -= eviction.len();
+        assert_eq!(0, self.in_memory_tuples[partition_to_evict]);
+        self.disk[partition_to_evict].push(common.storage.store(eviction));
+    }
+
+    fn insert<D>(&mut self,
+                 item: T,
+                 other: &mut Partitions<D::Right, E>,
+                 definition: &D,
+                 common: &mut Common<D::Output, E>)
+        where
+            D: MergePredicate + HashPredicate<Left=T>,
+            E: ExternalStorage<D::Right>
+    {
+        let hash = (definition.hash_left(&item) % (self.mem.len() as u64)) as usize;
+        //println!("hash({:?}) = {}", item.debug(), hash);
+        //println!("disks = {}", self.disk.len());
+        common.output_buffer.extend(other.mem[hash].iter().filter_map(|x| definition.eq(&item, x)));
+        self.mem[hash].push(item);
+        common.total_inmemory += 1;
+        self.in_memory_tuples[hash / PARTS_DISK_PER_MEM] += 1;
+    }
+}
+
+// parameter p
+// aka memory partitions per disk partition
+const PARTS_DISK_PER_MEM: usize = 2;
+const FAN_IN: usize = 2; // TODO: implement fan-in other than 2 (currently basically hardcoded, need some fixes to support other values)
+
+impl<L, R, D, E> HashMergeJoin<L, R, D, E>
+    where
+        L: Stream,
+        R: Stream<Error=L::Error>,
+        D: HashPredicate<Left=L::Item, Right=R::Item> + MergePredicate,
+        E: ExternalStorage<L::Item> + ExternalStorage<R::Item> {
+    fn check_eviction(&mut self) {
+        if self.common.total_inmemory >= self.common.memory_limit {
+            // if out of space, go evict
+            let memory_table: Vec<_> = self.parts_l.in_memory_tuples.iter().zip(&self.parts_r.in_memory_tuples).map(|(&left, &right)| PartitionStats { left, right }).collect();
+            let partition_to_evict = FlushSmallest::flush(&memory_table); // FIXME dont hardcode
+            //println!("EVICTING {} because of {:?}", partition_to_evict, memory_table);
+            self.parts_l.evict(partition_to_evict, &self.definition, &mut self.common);
+            self.parts_r.evict(partition_to_evict, &self.definition.by_ref().switch(), &mut self.common);
+        }
+    }
+
+    #[allow(dead_code)]
+    fn print_memory(&self) {
+        for (i, (l, r)) in self.parts_l.mem.iter().zip(&self.parts_r.mem).enumerate() {
+            println!("PARTITION#{}", i);
+            print!("left: ");
+            for l in l { print!("{:?}, ", l.debug()); }
+            println!();
+            print!("right: ");
+            for r in r { print!("{:?}, ", r.debug()); }
+            println!();
+        }
+    }
+}
 impl<L, R, D, E> Stream for HashMergeJoin<L, R, D, E>
     where
         L: Stream,
@@ -41,7 +206,79 @@ impl<L, R, D, E> Stream for HashMergeJoin<L, R, D, E>
     type Error = L::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        
+        loop {
+            if let Some(x) = self.common.output_buffer.pop_front() {
+                return Ok(Async::Ready(Some(x)));
+            }
+
+            if let Some(mut merge) = self.merge.take() {
+                match merge.omj.poll().unwrap() {
+                    Async::Ready(Some(x)) => {
+                        // merge ongoing, yield tuple
+                        self.merge = Some(merge);
+                        return Ok(Async::Ready(Some(x)));
+                    }
+                    Async::Ready(None) => {
+                        // merge complete, write merged partitions back to disk
+                        drop(merge.omj);
+                        self.parts_l.disk[merge.disk_partition].push(self.common.storage.store(merge.recv_left.unpack().into_iter().map(|(_, x)| x).collect()));
+                        self.parts_r.disk[merge.disk_partition].push(self.common.storage.store(merge.recv_right.unpack().into_iter().map(|(_, x)| x).collect()));
+                    }
+                    Async::NotReady => unreachable!(),
+                }
+            }
+
+            match (self.left.poll()?, self.right.poll()?) {
+                (l @ Async::Ready(Some(_)), r) | (l, r @ Async::Ready(Some(_))) => {
+                    // we have inputs => hash phase
+                    if let Async::Ready(Some(l)) = l {
+                        self.check_eviction();
+                        self.parts_l.insert(l, &mut self.parts_r, &self.definition, &mut self.common);
+                    }
+                    if let Async::Ready(Some(r)) = r {
+                        self.check_eviction();
+                        self.parts_r.insert(r, &mut self.parts_l, &self.definition.by_ref().switch(), &mut self.common);
+                    }
+                }
+                (l, r) => {
+                    // we don't => merge phase
+
+                    // TODO: what to pick ??
+                    // for now: just pick the first one we can find with >= 2 disk fragments
+                    let merge = self.parts_l.disk.iter_mut().zip(self.parts_r.disk.iter_mut())
+                        .enumerate().filter(|(_, (l, _))| l.len() >= FAN_IN)
+                        .map(|(i, (l, r))| (i, l.drain(..FAN_IN).collect(), r.drain(..FAN_IN).collect())).next();
+                    if let Some((i, l, r)) = merge {
+                        let (send_left, recv_left) = ValueSink::new(SortMerger::new(l, CmpLeft(Rc::clone(&self.definition))));
+                        let (send_right, recv_right) = ValueSink::new(SortMerger::new(r, CmpRight(Rc::clone(&self.definition))));
+
+                        self.merge = Some(MergePhase {
+                            disk_partition: i,
+                            recv_left,
+                            recv_right,
+                            omj: OrderedMergeJoin::new(send_left, send_right, IgnoreIndexPredicate(Rc::clone(&self.definition))),
+                        });
+                    } else {
+                        // none found, nothing to do!
+                        match (l, r) {
+                            (Async::Ready(None), Async::Ready(None)) => {
+                                // inputs complete => flush all
+                                if self.common.total_inmemory == 0 {
+                                    return Ok(Async::Ready(None));
+                                }
+
+                                // else go back and try for another merge
+                                for i in 0..self.parts_l.disk.len() {
+                                    self.parts_l.evict(i, &self.definition, &mut self.common);
+                                    self.parts_r.evict(i, &self.definition.by_ref().switch(), &mut self.common);
+                                }
+                            }
+                            _ => return Ok(Async::NotReady),
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 impl<L, R, D, E> Join<L, R, D, E> for HashMergeJoin<L, R, D, E>
@@ -51,13 +288,22 @@ impl<L, R, D, E> Join<L, R, D, E> for HashMergeJoin<L, R, D, E>
         D: HashPredicate<Left=L::Item, Right=R::Item> + MergePredicate,
         E: ExternalStorage<L::Item> + ExternalStorage<R::Item> {
     fn build(left: L, right: R, definition: D, storage: E, memory_limit: usize) -> Self {
-        HashMergeJoin::MainPhase(MainPhase {
-            definition,
-            storage,
+        let num_partitions = memory_limit / 2;
+        HashMergeJoin {
+            definition: Rc::new(definition),
+            common: Common {
+                storage,
+                memory_limit,
+                total_inmemory: 0,
+                output_buffer: VecDeque::new(),
+            },
             left: left.fuse(),
             right: right.fuse(),
-            memory_limit,
-        })
+            parts_l: Partitions::new(num_partitions),
+            parts_r: Partitions::new(num_partitions),
+
+            merge: None,
+        }
     }
 }
 

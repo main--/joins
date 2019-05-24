@@ -6,7 +6,6 @@ use named_type::NamedType;
 use named_type_derive::*;
 use itertools::{Itertools, MinMaxResult};
 use multimap::MultiMap;
-use debug_everything::Debuggable;
 
 use super::{Join, ExternalStorage, External};
 use crate::predicate::{JoinPredicate, HashPredicate};

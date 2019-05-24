@@ -26,6 +26,8 @@ use std::rc::Rc;
 
 mod equijoin;
 pub use equijoin::EquiJoin;
+mod switch;
+pub use switch::SwitchPredicate;
 
 pub trait JoinPredicate {
     type Left;
@@ -33,6 +35,14 @@ pub trait JoinPredicate {
     type Output;
 
     fn eq(&self, left: &Self::Left, right: &Self::Right) -> Option<Self::Output>;
+
+    fn switch(self) -> SwitchPredicate<Self> where Self: Sized {
+        SwitchPredicate(self)
+    }
+
+    fn by_ref(&self) -> &Self {
+        self
+    }
 }
 
 pub trait MergePredicate: JoinPredicate {

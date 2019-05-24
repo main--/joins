@@ -192,13 +192,13 @@ where
     J::Error: Debug {
     let simulator = IoSimulator::new();
     simulator.borrow_mut().right_to_left = Fraction::new(2usize, 1usize);
-    //simulator.borrow_mut().input_batch_size = Fraction::new(1000usize ,1usize);
-    simulator.borrow_mut().disk_ops_per_refill = 10;
+    simulator.borrow_mut().input_batch_size = Fraction::new(1000usize ,1usize);
+    //simulator.borrow_mut().disk_ops_per_refill = 10;
 
     let left = bench_source(data_left, &simulator, Side::Left);
     let right = bench_source(data_right, &simulator, Side::Right);
 
-    let join = J::build(left, right, definition, BenchStorage(Rc::clone(&simulator)), 6);
+    let join = J::build(left, right, definition, BenchStorage(Rc::clone(&simulator)), 4);
 
     let mut timings = Vec::new();
     let timed = join.inspect(|_| timings.push((simulator.borrow().read_tuple_count, simulator.borrow().disk_ops_out, simulator.borrow().disk_ops_in)));
@@ -228,21 +228,29 @@ where
     D::Output: Debug {
     bencher::<NestedLoopJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<BlockNestedLoopJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
-    bencher::<OrderedMergeJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
+    //bencher::<OrderedMergeJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<SortMergeJoin<_, _, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<SimpleHashJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<SymmetricHashJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<ProgressiveMergeJoin<_, _, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<XJoin<_, _, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
+    bencher::<HashMergeJoin<_, _, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
     // TODO: hybrid hash join
 }
 
 fn main() {
-    //let left_sorted: Vec<i32> = vec![0, 0,0,0,0, 0];
-    //let right_sorted: Vec<i32> = vec![0,0,0,0,0];
+    //let left_sorted: Vec<i32> = vec![0,0,0,0,0,0];
+    //let right_sorted: Vec<i32> = vec![0,0,0,0,0,0];
     let left_sorted: Vec<i32> = vec![1,3,3,3,3,3,3,3,3,4,7,18];
     let right_sorted: Vec<i32> = vec![0, 1, 3, 3,3,7,42,45];
-    let definition = EquiJoin::new(|&x| x, |&x| x);
+    //let left_sorted: Vec<i32> = (0..20).collect();
+    //let right_sorted: Vec<i32> = (0..20).rev().collect();
+
+    let definition = EquiJoin::new(|&x: &i32| x, |&x| x);
+    //let definition = definition.map_left(|&x| x * 2);
+    //let definition = predicate::MapLeftPredicate { predicate: definition, mapping: |x| x, phantom: std::marker::PhantomData };
+
+
     //let left_sorted: Vec<Tuple> = vec![1,3,3,3,3,3,3,3,3,4,7,18].into_iter().map(|x| Tuple { a: x, b: 0 }).collect();
     //let right_sorted: Vec<Tuple> = vec![0, 1, 3, 3,3,7,42,45].into_iter().map(|x| Tuple { a: 0, b: x }).collect();
     //let definition = EquiJoin::new(|x: &Tuple| (x.a, x.b), |x: &Tuple| (x.b, x.a));
