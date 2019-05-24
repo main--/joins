@@ -17,6 +17,7 @@ mod progressive_merge;
 pub use self::progressive_merge::ProgressiveMergeJoin;
 mod xjoin;
 pub use self::xjoin::XJoin;
+mod hash_merge;
 
 
 use crate::predicate::JoinPredicate;
