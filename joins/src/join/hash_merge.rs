@@ -113,8 +113,7 @@ struct PartitionStats {
 struct Common<O, E> {
     storage: E,
     total_inmemory: usize,
-    //memory_tuples: Vec<PartitionStats>,
-    memory_limit: usize,
+    config: HMJConfig,
     output_buffer: VecDeque<O>,
 }
 
@@ -124,15 +123,15 @@ struct Partitions<T, E: ExternalStorage<T>> {
     disk: Vec<Vec<E::External>>,
 }
 impl<T, E: ExternalStorage<T>> Partitions<T, E> {
-    fn new(num_partitions: usize) -> Self {
-       let mut x = Partitions { mem: Vec::new(), disk: Vec::new(), in_memory_tuples: vec![0; num_partitions / PARTS_DISK_PER_MEM] };
-       x.mem.resize_with(num_partitions, Default::default);
-       x.disk.resize_with(num_partitions / PARTS_DISK_PER_MEM, Default::default);
+    fn new(config: &HMJConfig) -> Self {
+       let mut x = Partitions { mem: Vec::new(), disk: Vec::new(), in_memory_tuples: vec![0; config.num_partitions / config.mem_parts_per_disk_part] };
+       x.mem.resize_with(config.num_partitions, Default::default);
+       x.disk.resize_with(config.num_partitions / config.mem_parts_per_disk_part, Default::default);
        x
     }
     fn evict<D: MergePredicate<Left=T>>(&mut self, partition_to_evict: usize, definition: &D, common: &mut Common<D::Output, E>) {
         let mut eviction: Vec<_> = self.mem.iter_mut().enumerate()
-            .filter(|(i, _)| (i / PARTS_DISK_PER_MEM) == partition_to_evict)
+            .filter(|(i, _)| (i / common.config.mem_parts_per_disk_part) == partition_to_evict)
             .flat_map(|(_, x)| mem::replace(x, Vec::new())).collect();
         //println!("evicting {} tuples", eviction.len());
         eviction.sort_by(|a, b| definition.cmp_left(a, b));
@@ -157,13 +156,10 @@ impl<T, E: ExternalStorage<T>> Partitions<T, E> {
         common.output_buffer.extend(other.mem[hash].iter().filter_map(|x| definition.eq(&item, x)));
         self.mem[hash].push(item);
         common.total_inmemory += 1;
-        self.in_memory_tuples[hash / PARTS_DISK_PER_MEM] += 1;
+        self.in_memory_tuples[hash / common.config.mem_parts_per_disk_part] += 1;
     }
 }
 
-// parameter p
-// aka memory partitions per disk partition
-const PARTS_DISK_PER_MEM: usize = 2;
 const FAN_IN: usize = 2; // TODO: implement fan-in other than 2 (currently basically hardcoded, need some fixes to support other values)
 
 impl<L, R, D, E> HashMergeJoin<L, R, D, E>
@@ -173,7 +169,7 @@ impl<L, R, D, E> HashMergeJoin<L, R, D, E>
         D: HashPredicate<Left=L::Item, Right=R::Item> + MergePredicate,
         E: ExternalStorage<L::Item> + ExternalStorage<R::Item> {
     fn check_eviction(&mut self) {
-        if self.common.total_inmemory >= self.common.memory_limit {
+        if self.common.total_inmemory >= self.common.config.memory_limit {
             // if out of space, go evict
             let memory_table: Vec<_> = self.parts_l.in_memory_tuples.iter().zip(&self.parts_r.in_memory_tuples).map(|(&left, &right)| PartitionStats { left, right }).collect();
             let partition_to_evict = FlushSmallest::flush(&memory_table); // FIXME dont hardcode
@@ -211,6 +207,7 @@ impl<L, R, D, E> Stream for HashMergeJoin<L, R, D, E>
                 return Ok(Async::Ready(Some(x)));
             }
 
+            // PAPER UNCLEAR: do we finish the merge first? or poll more input asap?
             if let Some(mut merge) = self.merge.take() {
                 match merge.omj.poll().unwrap() {
                     Async::Ready(Some(x)) => {
@@ -281,26 +278,39 @@ impl<L, R, D, E> Stream for HashMergeJoin<L, R, D, E>
         }
     }
 }
-impl<L, R, D, E> Join<L, R, D, E> for HashMergeJoin<L, R, D, E>
+
+pub struct HMJConfig {
+    pub memory_limit: usize,
+    pub num_partitions: usize,
+    // parameter p
+    // aka memory partitions per disk partition
+    pub mem_parts_per_disk_part: usize,
+}
+
+impl<L, R, D, E> Join<L, R, D, E, HMJConfig> for HashMergeJoin<L, R, D, E>
     where
         L: Stream,
         R: Stream<Error=L::Error>,
         D: HashPredicate<Left=L::Item, Right=R::Item> + MergePredicate,
         E: ExternalStorage<L::Item> + ExternalStorage<R::Item> {
-    fn build(left: L, right: R, definition: D, storage: E, memory_limit: usize) -> Self {
-        let num_partitions = memory_limit / 2;
+    fn build(left: L, right: R, definition: D, storage: E, config: HMJConfig) -> Self {
+        // assert!(config.num_partitions <= (config.memory_limit / 2)); // not sure if this /actually/ must hold?
+
+        // mem_parts_per_disk_part must evenly divide num_partitions
+        assert_eq!(0, config.num_partitions % config.mem_parts_per_disk_part);
+
         HashMergeJoin {
             definition: Rc::new(definition),
+            parts_l: Partitions::new(&config),
+            parts_r: Partitions::new(&config),
             common: Common {
                 storage,
-                memory_limit,
+                config,
                 total_inmemory: 0,
                 output_buffer: VecDeque::new(),
             },
             left: left.fuse(),
             right: right.fuse(),
-            parts_l: Partitions::new(num_partitions),
-            parts_r: Partitions::new(num_partitions),
 
             merge: None,
         }

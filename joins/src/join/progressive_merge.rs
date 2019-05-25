@@ -181,7 +181,7 @@ impl<L, R, D, E> Stream for ProgressiveMergeJoin<L, R, D, E>
         }
     }
 }
-impl<L, R, D, E> Join<L, R, D, E> for ProgressiveMergeJoin<L, R, D, E>
+impl<L, R, D, E> Join<L, R, D, E, usize> for ProgressiveMergeJoin<L, R, D, E>
     where L: Stream,
           R: Stream<Error=L::Error> + Rescan,
           E: ExternalStorage<L::Item> + ExternalStorage<R::Item>,

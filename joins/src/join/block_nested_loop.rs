@@ -58,7 +58,7 @@ impl<L, R, D> Rescan for BlockNestedLoopJoin<L, R, D>
 */
 
 
-impl<L, R, D, E> Join<L, R, D, E> for BlockNestedLoopJoin<L, R, D>
+impl<L, R, D, E> Join<L, R, D, E, usize> for BlockNestedLoopJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error> + Rescan,
           D: JoinPredicate<Left=L::Item, Right=R::Item> {

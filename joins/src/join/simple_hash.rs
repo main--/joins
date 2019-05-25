@@ -53,7 +53,7 @@ impl<L, R, D> Stream for SimpleHashJoin<L, R, D>
         }
     }
 }
-impl<L, R, D, E> Join<L, R, D, E> for SimpleHashJoin<L, R, D>
+impl<L, R, D, E> Join<L, R, D, E, usize> for SimpleHashJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error> + Rescan,
           D: HashPredicate<Left=L::Item, Right=R::Item> {

@@ -75,7 +75,7 @@ impl<L, R, D> Stream for SymmetricHashJoin<L, R, D>
         }
     }
 }
-impl<L, R, D, E> Join<L, R, D, E> for SymmetricHashJoin<L, R, D>
+impl<L, R, D, E> Join<L, R, D, E, usize> for SymmetricHashJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
           D: HashPredicate<Left=L::Item, Right=R::Item> {

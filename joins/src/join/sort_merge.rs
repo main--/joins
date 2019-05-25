@@ -148,7 +148,7 @@ impl<L, R, D, E> Stream for SortMergeJoin<L, R, D, E>
     }
 }
 
-impl<L, R, D, E> Join<L, R, D, E> for SortMergeJoin<L, R, D, E>
+impl<L, R, D, E> Join<L, R, D, E, usize> for SortMergeJoin<L, R, D, E>
     where L: Stream,
           R: Stream<Error=L::Error>,
           D: MergePredicate<Left=L::Item, Right=R::Item>,

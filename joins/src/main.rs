@@ -87,7 +87,7 @@ impl IoSimulator {
         if *budget >= one {
             *budget -= one;
             self.read_tuple_count += 1;
-            println!("read tuple {:?}", side);
+            //println!("read tuple {:?}", side);
             true
         } else {
             false
@@ -182,23 +182,23 @@ fn bench_source<T: Clone>(data: Vec<T>, simulator: &Rc<RefCell<IoSimulator>>, si
 // TODO: delet this
 existential type BenchSource<T>: Stream<Item=T, Error=()> + Rescan;
 
-fn bencher<J, D>(data_left: Vec<D::Left>, data_right: Vec<D::Right>, definition: D)
+fn bencher<J, D, C>(data_left: Vec<D::Left>, data_right: Vec<D::Right>, definition: D, config: C)
 where
-    J: Join<BenchSource<D::Left>, BenchSource<D::Right>, D, BenchStorage> + NamedType,
+    J: Join<BenchSource<D::Left>, BenchSource<D::Right>, D, BenchStorage, C> + NamedType,
     D: JoinPredicate,
     D::Left: Clone,
     D::Right: Clone,
     D::Output: Debug,
     J::Error: Debug {
     let simulator = IoSimulator::new();
-    simulator.borrow_mut().right_to_left = Fraction::new(2usize, 1usize);
-    simulator.borrow_mut().input_batch_size = Fraction::new(1000usize ,1usize);
-    //simulator.borrow_mut().disk_ops_per_refill = 10;
+    simulator.borrow_mut().right_to_left = Fraction::new(1usize, 2usize);
+    //simulator.borrow_mut().input_batch_size = Fraction::new(1000usize ,1usize);
+    simulator.borrow_mut().disk_ops_per_refill = 20;
 
     let left = bench_source(data_left, &simulator, Side::Left);
     let right = bench_source(data_right, &simulator, Side::Right);
 
-    let join = J::build(left, right, definition, BenchStorage(Rc::clone(&simulator)), 4);
+    let join = J::build(left, right, definition, BenchStorage(Rc::clone(&simulator)), config);
 
     let mut timings = Vec::new();
     let timed = join.inspect(|_| timings.push((simulator.borrow().read_tuple_count, simulator.borrow().disk_ops_out, simulator.borrow().disk_ops_in)));
@@ -226,25 +226,27 @@ where
     D::Left: Clone + Debug,
     D::Right: Clone + Debug,
     D::Output: Debug {
-    bencher::<NestedLoopJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
-    bencher::<BlockNestedLoopJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
-    //bencher::<OrderedMergeJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
-    bencher::<SortMergeJoin<_, _, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
-    bencher::<SimpleHashJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
-    bencher::<SymmetricHashJoin<_, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
-    bencher::<ProgressiveMergeJoin<_, _, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
-    bencher::<XJoin<_, _, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
-    bencher::<HashMergeJoin<_, _, _, _>, _>(data_left.clone(), data_right.clone(), definition.clone());
+    bencher::<NestedLoopJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), ());
+    bencher::<BlockNestedLoopJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 4);
+    //bencher::<OrderedMergeJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone());
+    bencher::<SortMergeJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 4);
+    bencher::<SimpleHashJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 4);
+    bencher::<SymmetricHashJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 4);
+    bencher::<ProgressiveMergeJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 4);
+    bencher::<XJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 4);
+    bencher::<HashMergeJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), join::HMJConfig { memory_limit: 6, mem_parts_per_disk_part: 3, num_partitions: 3 });
     // TODO: hybrid hash join
 }
 
 fn main() {
     //let left_sorted: Vec<i32> = vec![0,0,0,0,0,0];
     //let right_sorted: Vec<i32> = vec![0,0,0,0,0,0];
-    let left_sorted: Vec<i32> = vec![1,3,3,3,3,3,3,3,3,4,7,18];
-    let right_sorted: Vec<i32> = vec![0, 1, 3, 3,3,7,42,45];
+    //let left_sorted: Vec<i32> = vec![1,3,3,3,3,3,3,3,3,4,7,18];
+    //let right_sorted: Vec<i32> = vec![0, 1, 3, 3,3,7,42,45];
     //let left_sorted: Vec<i32> = (0..20).collect();
     //let right_sorted: Vec<i32> = (0..20).rev().collect();
+    let left_sorted: Vec<i32> = (0..20).collect();
+    let right_sorted: Vec<i32> = (10..20).chain(0..10).collect();
 
     let definition = EquiJoin::new(|&x: &i32| x, |&x| x);
     //let definition = definition.map_left(|&x| x * 2);

@@ -57,11 +57,11 @@ impl<L, R, D> NestedLoopJoin<L, R, D>
     }
 }
 
-impl<L, R, D, E> Join<L, R, D, E> for NestedLoopJoin<L, R, D>
+impl<L, R, D, E> Join<L, R, D, E, ()> for NestedLoopJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error> + Rescan,
           D: JoinPredicate<Left=L::Item, Right=R::Item> {
-    fn build(left: L, right: R, definition: D, _: E, _: usize) -> Self {
+    fn build(left: L, right: R, definition: D, _: E, _: ()) -> Self {
         NestedLoopJoin::new(left, right, definition)
     }
 }

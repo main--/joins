@@ -208,7 +208,6 @@ impl<L, R, D, E> Stream for XJoin<L, R, D, E>
                             | (Async::Ready(None), Async::NotReady)
                             | (Async::NotReady, Async::Ready(None)) => {
                             // both inputs blocked: phase 2
-                            // TODO FIXME !!! actually implement this FIXME TODO
                             let num_partitions = this.partitions_left.len() * 2;
                             if stage2_runs >= num_partitions {
                                 //println!("processed all disk partitions, still no data");
@@ -256,7 +255,7 @@ impl<L, R, D, E> Stream for XJoin<L, R, D, E>
         }
     }
 }
-impl<L, R, D, E> Join<L, R, D, E> for XJoin<L, R, D, E>
+impl<L, R, D, E> Join<L, R, D, E, usize> for XJoin<L, R, D, E>
     where L: Stream,
           R: Stream<Error=L::Error>,
           E: ExternalStorage<Timestamped<L::Item>> + ExternalStorage<Timestamped<R::Item>>,

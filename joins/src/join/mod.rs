@@ -18,7 +18,7 @@ pub use self::progressive_merge::ProgressiveMergeJoin;
 mod xjoin;
 pub use self::xjoin::XJoin;
 mod hash_merge;
-pub use self::hash_merge::HashMergeJoin;
+pub use self::hash_merge::{HashMergeJoin, HMJConfig};
 
 
 use crate::predicate::JoinPredicate;
@@ -27,7 +27,7 @@ pub trait Rescan: Stream {
     fn rescan(&mut self);
 }
 
-pub trait Join<Left, Right, Definition, ExtStorage>: Stream<Item=Definition::Output>
+pub trait Join<Left, Right, Definition, ExtStorage, Config>: Stream<Item=Definition::Output>
     where Left: Stream,
           Right: Stream<Error=Left::Error>,
           Left::Item: Borrow<Definition::Left>,
@@ -38,7 +38,7 @@ pub trait Join<Left, Right, Definition, ExtStorage>: Stream<Item=Definition::Out
         right: Right,
         definition: Definition,
         storage: ExtStorage,
-        main_memory: usize) -> Self;
+        config: Config) -> Self;
 }
 
 pub trait ExternalStorage<T> {

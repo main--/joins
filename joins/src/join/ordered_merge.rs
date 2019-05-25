@@ -1,4 +1,4 @@
-use debug_everything::Debuggable;
+//use debug_everything::Debuggable;
 use std::borrow::Borrow;
 use std::cmp::Ordering;
 use futures::{Stream, Poll, try_ready, Async, stream};
@@ -42,7 +42,7 @@ impl<L, R, D> Stream for OrderedMergeJoin<L, R, D>
                 } else {
                     try_ready!(self.left.peek())
                 };
-                println!("matching {:?} vs {:?}", left.debug(), right.debug());
+                //println!("matching {:?} vs {:?}", left.debug(), right.debug());
                 match (left, right) {
                     (Some(l), Some(r)) => {
                         ret = self.definition.eq(l.borrow(), r.borrow());
@@ -109,13 +109,13 @@ impl<L, R, D> OrderedMergeJoin<L, R, D>
     }
 }
 
-impl<L, R, D, E> Join<L, R, D, E> for OrderedMergeJoin<L, R, D>
+impl<L, R, D, E> Join<L, R, D, E, ()> for OrderedMergeJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
           L::Item: Borrow<D::Left>,
           R::Item: Borrow<D::Right>,
           D: MergePredicate {
-    fn build(left: L, right: R, definition: D, _: E, _: usize) -> Self {
+    fn build(left: L, right: R, definition: D, _: E, _: ()) -> Self {
         OrderedMergeJoin::new(left, right, definition)
     }
 }
