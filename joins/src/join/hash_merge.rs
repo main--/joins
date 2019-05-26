@@ -14,7 +14,7 @@ use super::progressive_merge::IgnoreIndexPredicate;
 use crate::predicate::{JoinPredicate, HashPredicate, MergePredicate, SwitchPredicate};
 
 #[derive(NamedType)]
-pub struct HashMergeJoin<L, R, D, E>
+pub struct HashMergeJoin<L, R, D, E, F>
     where
         L: Stream,
         R: Stream,
@@ -25,7 +25,7 @@ pub struct HashMergeJoin<L, R, D, E>
     parts_l: Partitions<L::Item, E>,
     parts_r: Partitions<R::Item, E>,
     definition: Rc<D>,
-    common: Common<D::Output, E>,
+    common: Common<D::Output, E, F>,
 
     // is there currently a merge going on?
     merge: Option<MergePhase<L, R, D, E>>,
@@ -89,31 +89,17 @@ pub struct MergePhase<L, R, D, E>
     disk_partition: usize,
 }
 
-// TODO: self type, parameter system, etc etc
-trait FlushingPolicy {
-    fn flush(memory_tuples: &[PartitionStats]) -> usize;
-}
-struct FlushSmallest;
-impl FlushingPolicy for FlushSmallest {
-    fn flush(memory_tuples: &[PartitionStats]) -> usize {
-        //println!("eviction? {:?}", memory_tuples);
-        match memory_tuples.iter().enumerate().minmax_by_key(|(_, &PartitionStats { left, right })| if (left + right) == 0 { std::usize::MAX } else { left + right }) {
-            MinMaxResult::NoElements => unreachable!(),
-            MinMaxResult::OneElement((i, _)) | MinMaxResult::MinMax((i, _), _) => i,
-        }
-    }
-}
 
 #[derive(Default, Clone, Debug)]
-struct PartitionStats {
+pub struct PartitionStats {
     left: usize,
     right: usize,
 }
 
-struct Common<O, E> {
+struct Common<O, E, F> {
     storage: E,
     total_inmemory: usize,
-    config: HMJConfig,
+    config: HMJConfig<F>,
     output_buffer: VecDeque<O>,
 }
 
@@ -123,13 +109,13 @@ struct Partitions<T, E: ExternalStorage<T>> {
     disk: Vec<Vec<E::External>>,
 }
 impl<T, E: ExternalStorage<T>> Partitions<T, E> {
-    fn new(config: &HMJConfig) -> Self {
+    fn new<F>(config: &HMJConfig<F>) -> Self {
        let mut x = Partitions { mem: Vec::new(), disk: Vec::new(), in_memory_tuples: vec![0; config.num_partitions / config.mem_parts_per_disk_part] };
        x.mem.resize_with(config.num_partitions, Default::default);
        x.disk.resize_with(config.num_partitions / config.mem_parts_per_disk_part, Default::default);
        x
     }
-    fn evict<D: MergePredicate<Left=T>>(&mut self, partition_to_evict: usize, definition: &D, common: &mut Common<D::Output, E>) {
+    fn evict<D: MergePredicate<Left=T>, F: FlushingPolicy>(&mut self, partition_to_evict: usize, definition: &D, common: &mut Common<D::Output, E, F>) {
         let mut eviction: Vec<_> = self.mem.iter_mut().enumerate()
             .filter(|(i, _)| (i / common.config.mem_parts_per_disk_part) == partition_to_evict)
             .flat_map(|(_, x)| mem::replace(x, Vec::new())).collect();
@@ -141,14 +127,15 @@ impl<T, E: ExternalStorage<T>> Partitions<T, E> {
         self.disk[partition_to_evict].push(common.storage.store(eviction));
     }
 
-    fn insert<D>(&mut self,
-                 item: T,
-                 other: &mut Partitions<D::Right, E>,
-                 definition: &D,
-                 common: &mut Common<D::Output, E>)
-        where
-            D: MergePredicate + HashPredicate<Left=T>,
-            E: ExternalStorage<D::Right>
+    fn insert<D, F: FlushingPolicy>(
+        &mut self,
+        item: T,
+        other: &mut Partitions<D::Right, E>,
+        definition: &D,
+        common: &mut Common<D::Output, E, F>)
+    where
+        D: MergePredicate + HashPredicate<Left=T>,
+        E: ExternalStorage<D::Right>
     {
         let hash = (definition.hash_left(&item) % (self.mem.len() as u64)) as usize;
         //println!("hash({:?}) = {}", item.debug(), hash);
@@ -160,17 +147,18 @@ impl<T, E: ExternalStorage<T>> Partitions<T, E> {
     }
 }
 
-impl<L, R, D, E> HashMergeJoin<L, R, D, E>
+impl<L, R, D, E, F> HashMergeJoin<L, R, D, E, F>
     where
         L: Stream,
         R: Stream<Error=L::Error>,
         D: HashPredicate<Left=L::Item, Right=R::Item> + MergePredicate,
+        F: FlushingPolicy,
         E: ExternalStorage<L::Item> + ExternalStorage<R::Item> {
     fn check_eviction(&mut self) {
         if self.common.total_inmemory >= self.common.config.memory_limit {
             // if out of space, go evict
             let memory_table: Vec<_> = self.parts_l.in_memory_tuples.iter().zip(&self.parts_r.in_memory_tuples).map(|(&left, &right)| PartitionStats { left, right }).collect();
-            let partition_to_evict = FlushSmallest::flush(&memory_table); // FIXME dont hardcode
+            let partition_to_evict = self.common.config.flushing_policy.flush(&memory_table); // FIXME dont hardcode
             //println!("EVICTING {} because of {:?}", partition_to_evict, memory_table);
             self.parts_l.evict(partition_to_evict, &self.definition, &mut self.common);
             self.parts_r.evict(partition_to_evict, &self.definition.by_ref().switch(), &mut self.common);
@@ -190,11 +178,12 @@ impl<L, R, D, E> HashMergeJoin<L, R, D, E>
         }
     }
 }
-impl<L, R, D, E> Stream for HashMergeJoin<L, R, D, E>
+impl<L, R, D, E, F> Stream for HashMergeJoin<L, R, D, E, F>
     where
         L: Stream,
         R: Stream<Error=L::Error>,
         D: HashPredicate<Left=L::Item, Right=R::Item> + MergePredicate,
+        F: FlushingPolicy,
         E: ExternalStorage<L::Item> + ExternalStorage<R::Item> {
     type Item = D::Output;
     type Error = L::Error;
@@ -281,22 +270,42 @@ impl<L, R, D, E> Stream for HashMergeJoin<L, R, D, E>
     }
 }
 
-pub struct HMJConfig {
+pub struct HMJConfig<F> {
     pub memory_limit: usize,
-    pub num_partitions: usize,
+    pub num_partitions: usize, // paper has no idea regarding memory_limit vs num_partitions
+
     // parameter p
     // aka memory partitions per disk partition
-    pub mem_parts_per_disk_part: usize,
+    pub mem_parts_per_disk_part: usize, // paper recommends: 5% * num_partitions
+
+    // parameter f
     pub fan_in: usize,
+
+    pub flushing_policy: F,
 }
 
-impl<L, R, D, E> Join<L, R, D, E, HMJConfig> for HashMergeJoin<L, R, D, E>
+pub trait FlushingPolicy {
+    fn flush(&mut self, memory_tuples: &[PartitionStats]) -> usize;
+}
+pub struct FlushSmallest;
+impl FlushingPolicy for FlushSmallest {
+    fn flush(&mut self, memory_tuples: &[PartitionStats]) -> usize {
+        //println!("eviction? {:?}", memory_tuples);
+        match memory_tuples.iter().enumerate().minmax_by_key(|(_, &PartitionStats { left, right })| if (left + right) == 0 { std::usize::MAX } else { left + right }) {
+            MinMaxResult::NoElements => unreachable!(),
+            MinMaxResult::OneElement((i, _)) | MinMaxResult::MinMax((i, _), _) => i,
+        }
+    }
+}
+
+impl<L, R, D, E, F> Join<L, R, D, E, HMJConfig<F>> for HashMergeJoin<L, R, D, E, F>
     where
         L: Stream,
         R: Stream<Error=L::Error>,
         D: HashPredicate<Left=L::Item, Right=R::Item> + MergePredicate,
+        F: FlushingPolicy,
         E: ExternalStorage<L::Item> + ExternalStorage<R::Item> {
-    fn build(left: L, right: R, definition: D, storage: E, config: HMJConfig) -> Self {
+    fn build(left: L, right: R, definition: D, storage: E, config: HMJConfig<F>) -> Self {
         // assert!(config.num_partitions <= (config.memory_limit / 2)); // not sure if this /actually/ must hold?
 
         // mem_parts_per_disk_part must evenly divide num_partitions
