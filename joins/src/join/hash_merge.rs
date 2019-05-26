@@ -1,4 +1,4 @@
-use std::mem;
+use std::{cmp, mem};
 use std::fmt::Debug;
 use std::rc::Rc;
 use std::collections::VecDeque;
@@ -160,8 +160,6 @@ impl<T, E: ExternalStorage<T>> Partitions<T, E> {
     }
 }
 
-const FAN_IN: usize = 2; // TODO: implement fan-in other than 2 (currently basically hardcoded, need some fixes to support other values)
-
 impl<L, R, D, E> HashMergeJoin<L, R, D, E>
     where
         L: Stream,
@@ -243,10 +241,12 @@ impl<L, R, D, E> Stream for HashMergeJoin<L, R, D, E>
                     // what to pick ??
                     // for now: find the biggest, then merge up to the given fan-in
                     // PAPER UNCLEAR: perhaps we should decline to merge unless we're in cleanup phase?
+                    let fan_in = self.common.config.fan_in;
                     let merge = self.parts_l.disk.iter_mut().zip(self.parts_r.disk.iter_mut())
-                        .enumerate().filter(|(_, (l, _))| l.len() >= FAN_IN)
+                        .enumerate().filter(|(_, (l, _))| l.len() > 1)
                         .sorted_by_key(|(_, (l, _))| l.len()).rev()
-                        .map(|(i, (l, r))| (i, l.drain(..FAN_IN).collect(), r.drain(..FAN_IN).collect())).next();
+                        .map(|(i, (l, r))| (i, l.drain(..cmp::min(l.len(), fan_in)).collect(), r.drain(..cmp::min(r.len(), fan_in))
+                        .collect())).next();
                     if let Some((i, l, r)) = merge {
                         let (send_left, recv_left) = ValueSink::new(SortMerger::new(l, Rc::clone(&self.definition)));
                         let (send_right, recv_right) = ValueSink::new(SortMerger::new(r, Rc::clone(&self.definition).switch()));
@@ -287,6 +287,7 @@ pub struct HMJConfig {
     // parameter p
     // aka memory partitions per disk partition
     pub mem_parts_per_disk_part: usize,
+    pub fan_in: usize,
 }
 
 impl<L, R, D, E> Join<L, R, D, E, HMJConfig> for HashMergeJoin<L, R, D, E>
@@ -300,6 +301,8 @@ impl<L, R, D, E> Join<L, R, D, E, HMJConfig> for HashMergeJoin<L, R, D, E>
 
         // mem_parts_per_disk_part must evenly divide num_partitions
         assert_eq!(0, config.num_partitions % config.mem_parts_per_disk_part);
+
+        assert!(config.fan_in > 1);
 
         HashMergeJoin {
             definition: Rc::new(definition),

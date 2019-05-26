@@ -234,7 +234,7 @@ where
     bencher::<SymmetricHashJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 4);
     bencher::<ProgressiveMergeJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 4);
     bencher::<XJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 4);
-    bencher::<HashMergeJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), join::HMJConfig { memory_limit: 6, mem_parts_per_disk_part: 3, num_partitions: 3 });
+    bencher::<HashMergeJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), join::HMJConfig { memory_limit: 10, mem_parts_per_disk_part: 1, num_partitions: 5, fan_in: 4 });
     // TODO: hybrid hash join
 }
 
