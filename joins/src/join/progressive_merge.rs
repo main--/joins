@@ -8,8 +8,8 @@ use named_type_derive::*;
 use debug_everything::Debuggable;
 
 use super::{Join, Rescan, OrderedMergeJoin, ExternalStorage};
-use super::sort_merge::{SortMerger, CmpLeft, CmpRight};
-use crate::predicate::{JoinPredicate, MergePredicate};
+use super::sort_merge::SortMerger;
+use crate::predicate::{JoinPredicate, MergePredicate, SwitchPredicate};
 
 pub struct InputPhase<L, R, D, E> 
     where
@@ -39,11 +39,10 @@ pub enum ProgressiveMergeJoin<L, R, D, E>
     InputPhase(InputPhase<L, R, D, E>),
     OutputPhase {
         output_buffer: VecDeque<D::Output>,
-        omj: OrderedMergeJoin<Merger<L, E, CmpLeft<Rc<D>>>, Merger<R, E, CmpRight<Rc<D>>>, IgnoreIndexPredicate<Rc<D>>>,
+        omj: OrderedMergeJoin<SortMerger<Rc<D>, <E as ExternalStorage<L::Item>>::External>, SortMerger<SwitchPredicate<Rc<D>>, <E as ExternalStorage<R::Item>>::External>, IgnoreIndexPredicate<Rc<D>>>,
     },
     Tmp,
 }
-type Merger<S, E, C> = SortMerger<<S as Stream>::Item, <E as ExternalStorage<<S as Stream>::Item>>::External, C>;
 
 impl<L, R, D, E> InputPhase<L, R, D, E>
     where L: Stream,
@@ -167,8 +166,8 @@ impl<L, R, D, E> Stream for ProgressiveMergeJoin<L, R, D, E>
 
                     let definition = Rc::new(definition);
 
-                    let left = SortMerger::new(left_runs, CmpLeft(definition.clone()));
-                    let right = SortMerger::new(right_runs, CmpRight(definition.clone()));
+                    let left = SortMerger::new(left_runs, definition.clone());
+                    let right = SortMerger::new(right_runs, definition.clone().switch());
 
                     println!("merge phase!");
                     ProgressiveMergeJoin::OutputPhase {

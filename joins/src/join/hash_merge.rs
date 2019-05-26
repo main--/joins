@@ -9,9 +9,9 @@ use itertools::{Itertools, MinMaxResult};
 use debug_everything::Debuggable;
 
 use super::{Join, ExternalStorage, OrderedMergeJoin};
-use super::sort_merge::{SortMerger, CmpLeft, CmpRight};
+use super::sort_merge::SortMerger;
 use super::progressive_merge::IgnoreIndexPredicate;
-use crate::predicate::{JoinPredicate, HashPredicate, MergePredicate};
+use crate::predicate::{JoinPredicate, HashPredicate, MergePredicate, SwitchPredicate};
 
 #[derive(NamedType)]
 pub struct HashMergeJoin<L, R, D, E>
@@ -30,7 +30,7 @@ pub struct HashMergeJoin<L, R, D, E>
     // is there currently a merge going on?
     merge: Option<MergePhase<L, R, D, E>>,
 }
-type Merger<S, E, C> = ValueSink<SortMerger<<S as Stream>::Item, <E as ExternalStorage<<S as Stream>::Item>>::External, C>>;
+type Merger<D, E> = ValueSink<SortMerger<D, <E as ExternalStorage<<D as JoinPredicate>::Left>>::External>>;
 pub struct ValueSink<S: Stream> {
     underlying: stream::Fuse<S>,
     sink: futures::unsync::mpsc::UnboundedSender<Result<Rc<S::Item>, S::Error>>,
@@ -83,7 +83,7 @@ pub struct MergePhase<L, R, D, E>
         R: Stream,
         D: MergePredicate<Left=L::Item, Right=R::Item>,
         E: ExternalStorage<L::Item> + ExternalStorage<R::Item> {
-    omj: OrderedMergeJoin<Merger<L, E, CmpLeft<Rc<D>>>, Merger<R, E, CmpRight<Rc<D>>>, IgnoreIndexPredicate<Rc<D>>>,
+    omj: OrderedMergeJoin<Merger<Rc<D>, E>, Merger<SwitchPredicate<Rc<D>>, E>, IgnoreIndexPredicate<Rc<D>>>,
     recv_left: ValueSinkRecv<(usize, L::Item), ()>,
     recv_right: ValueSinkRecv<(usize, R::Item), ()>,
     disk_partition: usize,
@@ -240,14 +240,16 @@ impl<L, R, D, E> Stream for HashMergeJoin<L, R, D, E>
                 (l, r) => {
                     // we don't => merge phase
 
-                    // TODO: what to pick ??
-                    // for now: just pick the first one we can find with >= 2 disk fragments
+                    // what to pick ??
+                    // for now: find the biggest, then merge up to the given fan-in
+                    // PAPER UNCLEAR: perhaps we should decline to merge unless we're in cleanup phase?
                     let merge = self.parts_l.disk.iter_mut().zip(self.parts_r.disk.iter_mut())
                         .enumerate().filter(|(_, (l, _))| l.len() >= FAN_IN)
+                        .sorted_by_key(|(_, (l, _))| l.len()).rev()
                         .map(|(i, (l, r))| (i, l.drain(..FAN_IN).collect(), r.drain(..FAN_IN).collect())).next();
                     if let Some((i, l, r)) = merge {
-                        let (send_left, recv_left) = ValueSink::new(SortMerger::new(l, CmpLeft(Rc::clone(&self.definition))));
-                        let (send_right, recv_right) = ValueSink::new(SortMerger::new(r, CmpRight(Rc::clone(&self.definition))));
+                        let (send_left, recv_left) = ValueSink::new(SortMerger::new(l, Rc::clone(&self.definition)));
+                        let (send_right, recv_right) = ValueSink::new(SortMerger::new(r, Rc::clone(&self.definition).switch()));
 
                         self.merge = Some(MergePhase {
                             disk_partition: i,
