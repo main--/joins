@@ -11,6 +11,7 @@ mod predicate;
 use predicate::*;
 mod join;
 use join::*;
+mod value_skimmer;
 
 
 pub struct BenchStorage(Rc<RefCell<IoSimulator>>);
@@ -234,7 +235,7 @@ where
     bencher::<SymmetricHashJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 4);
     bencher::<ProgressiveMergeJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 4);
     bencher::<XJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 4);
-    bencher::<HashMergeJoin<_, _, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), join::hash_merge::HMJConfig { memory_limit: 10, mem_parts_per_disk_part: 1, num_partitions: 5, fan_in: 4, flushing_policy: join::hash_merge::FlushSmallest });
+    bencher::<HashMergeJoin<_, _, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), join::hash_merge::HMJConfig { memory_limit: 10, mem_parts_per_disk_part: 1, num_partitions: 5, fan_in: 4, flushing_policy: join::hash_merge::flush::FlushSmallest });
     // TODO: hybrid hash join
 }
 

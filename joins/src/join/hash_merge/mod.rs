@@ -1,17 +1,20 @@
 use std::{cmp, mem};
-use std::fmt::Debug;
 use std::rc::Rc;
 use std::collections::VecDeque;
-use futures::{Future, Stream, Poll, Async, stream, try_ready};
+use futures::{Stream, Poll, Async, stream};
 use named_type::NamedType;
 use named_type_derive::*;
-use itertools::{Itertools, MinMaxResult};
+use itertools::Itertools;
 use debug_everything::Debuggable;
 
 use super::{Join, ExternalStorage, OrderedMergeJoin};
 use super::sort_merge::SortMerger;
 use super::progressive_merge::IgnoreIndexPredicate;
 use crate::predicate::{JoinPredicate, HashPredicate, MergePredicate, SwitchPredicate};
+
+pub mod flush;
+use self::flush::{FlushingPolicy, PartitionStats};
+use crate::value_skimmer::{ValueSink, ValueSinkRecv};
 
 #[derive(NamedType)]
 pub struct HashMergeJoin<L, R, D, E, F>
@@ -31,51 +34,6 @@ pub struct HashMergeJoin<L, R, D, E, F>
     merge: Option<MergePhase<L, R, D, E>>,
 }
 type Merger<D, E> = ValueSink<SortMerger<D, <E as ExternalStorage<<D as JoinPredicate>::Left>>::External>>;
-pub struct ValueSink<S: Stream> {
-    underlying: stream::Fuse<S>,
-    sink: futures::unsync::mpsc::UnboundedSender<Result<Rc<S::Item>, S::Error>>,
-}
-struct ValueSinkRecv<T, E> {
-    recv: futures::unsync::mpsc::UnboundedReceiver<Result<Rc<T>, E>>,
-}
-impl<T, E> ValueSinkRecv<T, E> {
-    fn unpack(self) -> Vec<T> where E: Debug {
-        match self.recv.map(|r| match Rc::try_unwrap(r.unwrap()) { Ok(x) => x, _ => unreachable!() }).collect().poll().unwrap() {
-            Async::Ready(v) => v,
-            Async::NotReady => unreachable!(),
-        }
-    }
-}
-impl<S: Stream> ValueSink<S> {
-    fn new(underlying: S) -> (Self, ValueSinkRecv<S::Item, S::Error>) {
-        let (send, recv) = futures::unsync::mpsc::unbounded();
-        (ValueSink { underlying: underlying.fuse(), sink: send }, ValueSinkRecv { recv })
-    }
-}
-impl<S: Stream> Stream for ValueSink<S> {
-    type Item = Rc<S::Item>;
-    type Error = S::Error;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, S::Error> {
-        Ok(Async::Ready(try_ready!(self.underlying.poll()).map(|x| {
-            let x = Rc::new(x);
-            self.sink.unbounded_send(Ok(Rc::clone(&x))).unwrap();
-            x
-        })))
-    }
-}
-impl<S: Stream> Drop for ValueSink<S> {
-    fn drop(&mut self) {
-        loop {
-            match self.poll() {
-                Ok(Async::Ready(None)) => break,
-                Ok(Async::Ready(Some(_))) => (),
-                Ok(Async::NotReady) => if !std::thread::panicking() { panic!("we lost"); },
-                Err(e) => drop(self.sink.unbounded_send(Err(e))),
-            }
-        }
-    }
-}
 
 pub struct MergePhase<L, R, D, E>
     where
@@ -87,13 +45,6 @@ pub struct MergePhase<L, R, D, E>
     recv_left: ValueSinkRecv<(usize, L::Item), ()>,
     recv_right: ValueSinkRecv<(usize, R::Item), ()>,
     disk_partition: usize,
-}
-
-
-#[derive(Default, Clone, Debug)]
-pub struct PartitionStats {
-    left: usize,
-    right: usize,
 }
 
 struct Common<O, E, F> {
@@ -157,7 +108,10 @@ impl<L, R, D, E, F> HashMergeJoin<L, R, D, E, F>
     fn check_eviction(&mut self) {
         if self.common.total_inmemory >= self.common.config.memory_limit {
             // if out of space, go evict
-            let memory_table: Vec<_> = self.parts_l.in_memory_tuples.iter().zip(&self.parts_r.in_memory_tuples).map(|(&left, &right)| PartitionStats { left, right }).collect();
+            let memory_table: Vec<_> = self.parts_l.in_memory_tuples.iter().zip(&self.parts_r.in_memory_tuples)
+                .chunks(self.common.config.mem_parts_per_disk_part).into_iter()
+                .map(|chunk| chunk.fold(PartitionStats { left: 0, right: 0 }, |s, (&l, &r)| PartitionStats { left: s.left + l, right: s.right + r }))
+                .collect();
             let partition_to_evict = self.common.config.flushing_policy.flush(&memory_table); // FIXME dont hardcode
             //println!("EVICTING {} because of {:?}", partition_to_evict, memory_table);
             self.parts_l.evict(partition_to_evict, &self.definition, &mut self.common);
@@ -284,19 +238,6 @@ pub struct HMJConfig<F> {
     pub flushing_policy: F,
 }
 
-pub trait FlushingPolicy {
-    fn flush(&mut self, memory_tuples: &[PartitionStats]) -> usize;
-}
-pub struct FlushSmallest;
-impl FlushingPolicy for FlushSmallest {
-    fn flush(&mut self, memory_tuples: &[PartitionStats]) -> usize {
-        //println!("eviction? {:?}", memory_tuples);
-        match memory_tuples.iter().enumerate().minmax_by_key(|(_, &PartitionStats { left, right })| if (left + right) == 0 { std::usize::MAX } else { left + right }) {
-            MinMaxResult::NoElements => unreachable!(),
-            MinMaxResult::OneElement((i, _)) | MinMaxResult::MinMax((i, _), _) => i,
-        }
-    }
-}
 
 impl<L, R, D, E, F> Join<L, R, D, E, HMJConfig<F>> for HashMergeJoin<L, R, D, E, F>
     where
