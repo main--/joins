@@ -109,7 +109,7 @@ impl<L, R, D, E> Stream for ProgressiveMergeJoin<L, R, D, E>
             match self {
                 ProgressiveMergeJoin::InputPhase(i) => {
                     if let Some(buffered) = i.output_buffer.pop_front() {
-                        println!("yielding {:?} from buffer", buffered.debug());
+                        //println!("yielding {:?} from buffer", buffered.debug());
                         // pending buffered tuples
                         return Ok(Async::Ready(Some(buffered)));
                     }
@@ -141,14 +141,14 @@ impl<L, R, D, E> Stream for ProgressiveMergeJoin<L, R, D, E>
                 ProgressiveMergeJoin::OutputPhase { output_buffer, omj } => {
                     if let Some(buffered) = output_buffer.pop_front() {
                         // pending buffered tuples
-                        println!("yielding {:?} from buffer 2", buffered.debug());
+                        //println!("yielding {:?} from buffer 2", buffered.debug());
                         return Ok(Async::Ready(Some(buffered)));
                     }
                     
                     match omj.poll().unwrap() {
                         Async::Ready(None) => return Ok(Async::Ready(None)),
                         Async::Ready(Some(item)) => {
-                            println!("yielding {:?} from MERGE", item.debug());
+                            //println!("yielding {:?} from MERGE", item.debug());
                             return Ok(Async::Ready(Some(item)));
                         }
                         Async::NotReady => unreachable!(),
@@ -169,7 +169,7 @@ impl<L, R, D, E> Stream for ProgressiveMergeJoin<L, R, D, E>
                     let left = SortMerger::new(left_runs, definition.clone());
                     let right = SortMerger::new(right_runs, definition.clone().switch());
 
-                    println!("merge phase!");
+                    //println!("merge phase!");
                     ProgressiveMergeJoin::OutputPhase {
                         output_buffer,
                         omj: OrderedMergeJoin::new(left, right, IgnoreIndexPredicate(definition)),

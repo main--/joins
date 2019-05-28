@@ -73,7 +73,7 @@ fn manage_buf<T, E: ExternalStorage<T>, F: Fn(&T, &T) -> std::cmp::Ordering>(
     }
     if buffer.len() >= size_limit {
         buffer.sort_by(sort);
-        println!("flush");
+        //println!("flush");
         blocks.push(storage.store(std::mem::replace(buffer, Vec::new())));
     }
 }
