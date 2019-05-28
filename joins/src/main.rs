@@ -5,6 +5,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use futures::{Future, Stream, Async, Poll};
 use named_type::NamedType;
+use rand::prelude::*;
 
 
 mod predicate;
@@ -192,9 +193,9 @@ where
     D::Output: Debug,
     J::Error: Debug {
     let simulator = IoSimulator::new();
-    simulator.borrow_mut().right_to_left = Fraction::new(1usize, 2usize);
-    //simulator.borrow_mut().input_batch_size = Fraction::new(1000usize ,1usize);
-    simulator.borrow_mut().disk_ops_per_refill = 20;
+    //simulator.borrow_mut().right_to_left = Fraction::new(1usize, 2usize);
+    simulator.borrow_mut().input_batch_size = Fraction::new(1000000000usize ,1usize);
+    //simulator.borrow_mut().disk_ops_per_refill = 20;
 
     let left = bench_source(data_left, &simulator, Side::Left);
     let right = bench_source(data_right, &simulator, Side::Right);
@@ -202,16 +203,25 @@ where
     let join = J::build(left, right, definition, BenchStorage(Rc::clone(&simulator)), config);
 
     let mut timings = Vec::new();
-    let timed = join.inspect(|_| timings.push((simulator.borrow().read_tuple_count, simulator.borrow().disk_ops_out, simulator.borrow().disk_ops_in)));
+    let timed = join.inspect(|_| {
+    timings.push((simulator.borrow().read_tuple_count, simulator.borrow().disk_ops_out, simulator.borrow().disk_ops_in));
+    if timings.len() % 100 == 0 {
+    //println!("{}", timings.len());
+    }
+    });
 
+    println!("Running {} ...", J::short_type_name());
     let mut collector = timed.collect();
     loop {
         match collector.poll() {
             Ok(Async::Ready(result)) => {
-                println!("{} RESULTS {:?} ({} items)", J::short_type_name(), result, result.len());
+                println!("{} RESULTS {:?} ({} items)", J::short_type_name(), (), result.len());
                 break;
             }
-            Ok(Async::NotReady) => simulator.borrow_mut().add_input_budget(),
+            Ok(Async::NotReady) => {
+                println!("=== REFILL ===");
+                simulator.borrow_mut().add_input_budget();
+            }
             Err(e) => {
                 println!("{} error: {:?}", J::short_type_name(), e);
                 return;
@@ -227,15 +237,16 @@ where
     D::Left: Clone + Debug,
     D::Right: Clone + Debug,
     D::Output: Debug {
-    bencher::<NestedLoopJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), ());
-    bencher::<BlockNestedLoopJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 4);
+    let memory = 1024_0;
+    //bencher::<NestedLoopJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), ());
+    //bencher::<BlockNestedLoopJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 100024);
     //bencher::<OrderedMergeJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone());
-    bencher::<SortMergeJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 4);
-    bencher::<SimpleHashJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 4);
-    bencher::<SymmetricHashJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 4);
-    bencher::<ProgressiveMergeJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 4);
-    bencher::<XJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 4);
-    bencher::<HashMergeJoin<_, _, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), join::hash_merge::HMJConfig { memory_limit: 10, mem_parts_per_disk_part: 1, num_partitions: 5, fan_in: 4, flushing_policy: join::hash_merge::flush::FlushSmallest });
+    bencher::<SortMergeJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
+    //bencher::<SimpleHashJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
+    bencher::<SymmetricHashJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
+    bencher::<ProgressiveMergeJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
+    bencher::<XJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
+    bencher::<HashMergeJoin<_, _, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), join::hash_merge::HMJConfig { memory_limit: memory, mem_parts_per_disk_part: memory / 40, num_partitions: memory / 2, fan_in: 1024, flushing_policy: join::hash_merge::flush::Adaptive { a: 10, b: 0.25 } });
     // TODO: hybrid hash join
 }
 
@@ -246,8 +257,18 @@ fn main() {
     //let right_sorted: Vec<i32> = vec![0, 1, 3, 3,3,7,42,45];
     //let left_sorted: Vec<i32> = (0..20).collect();
     //let right_sorted: Vec<i32> = (0..20).rev().collect();
-    let left_sorted: Vec<i32> = (0..20).collect();
-    let right_sorted: Vec<i32> = (10..20).chain(0..10).collect();
+    
+    //let left_sorted: Vec<i32> = (0..20).collect();
+    //let right_sorted: Vec<i32> = (10..20).chain(0..10).collect();
+    
+    let mut left_sorted: Vec<i32> = (0..1_000_000).collect();
+    let mut right_sorted: Vec<i32> = (0..1_000_000).collect();
+    
+    let mut rng = SmallRng::seed_from_u64(42);
+    left_sorted.shuffle(&mut rng);
+    right_sorted.shuffle(&mut rng);
+    eprintln!("shuffle done !!");
+    
 
     let definition = EquiJoin::new(|&x: &i32| x, |&x| x);
     //let definition = definition.map_left(|&x| x * 2);
