@@ -109,9 +109,7 @@ impl<L, R, D, E, F> HashMergeJoin<L, R, D, E, F>
         if self.common.total_inmemory >= self.common.config.memory_limit {
             // if out of space, go evict
             let memory_table: Vec<_> = self.parts_l.in_memory_tuples.iter().zip(&self.parts_r.in_memory_tuples)
-                .chunks(self.common.config.mem_parts_per_disk_part).into_iter()
-                .map(|chunk| chunk.fold(PartitionStats { left: 0, right: 0 }, |s, (&l, &r)| PartitionStats { left: s.left + l, right: s.right + r }))
-                .collect();
+                .map(|(l, r)| PartitionStats { left: *l, right: *r }).collect();
             let partition_to_evict = self.common.config.flushing_policy.flush(&memory_table); // FIXME dont hardcode
             //println!("EVICTING {} because of {:?}", partition_to_evict, memory_table);
             self.parts_l.evict(partition_to_evict, &self.definition, &mut self.common);
