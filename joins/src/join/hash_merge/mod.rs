@@ -176,6 +176,13 @@ impl<L, R, D, E, F> Stream for HashMergeJoin<L, R, D, E, F>
                         self.parts_r.insert(r, &mut self.parts_l, &self.definition.by_ref().switch(), &mut self.common);
                     }
                 }
+                (Async::Ready(None), Async::Ready(None)) if self.common.total_inmemory != 0 => {
+                    // inputs complete => flush all
+                    for i in 0..self.parts_l.disk.len() {
+                        self.parts_l.evict(i, &self.definition, &mut self.common);
+                        self.parts_r.evict(i, &self.definition.by_ref().switch(), &mut self.common);
+                    }
+                }
                 (l, r) => {
                     // we don't => merge phase
 
@@ -202,16 +209,8 @@ impl<L, R, D, E, F> Stream for HashMergeJoin<L, R, D, E, F>
                         // none found, nothing to do!
                         match (l, r) {
                             (Async::Ready(None), Async::Ready(None)) => {
-                                // inputs complete => flush all
-                                if self.common.total_inmemory == 0 {
-                                    return Ok(Async::Ready(None));
-                                }
-
-                                // else go back and try for another merge
-                                for i in 0..self.parts_l.disk.len() {
-                                    self.parts_l.evict(i, &self.definition, &mut self.common);
-                                    self.parts_r.evict(i, &self.definition.by_ref().switch(), &mut self.common);
-                                }
+                                assert_eq!(0, self.common.total_inmemory);
+                                return Ok(Async::Ready(None));
                             }
                             _ => return Ok(Async::NotReady),
                         }
