@@ -193,9 +193,10 @@ where
     D::Output: Debug,
     J::Error: Debug {
     let simulator = IoSimulator::new();
-    //simulator.borrow_mut().right_to_left = Fraction::new(1usize, 2usize);
-    simulator.borrow_mut().input_batch_size = Fraction::new(1000000000usize ,1usize);
-    //simulator.borrow_mut().disk_ops_per_refill = 20;
+    simulator.borrow_mut().right_to_left = Fraction::new(2usize, 1usize);
+    //simulator.borrow_mut().input_batch_size = Fraction::new(1000000000usize ,1usize);
+    //simulator.borrow_mut().input_batch_size = Fraction::new(10000usize ,1usize);
+    simulator.borrow_mut().disk_ops_per_refill = 15;
 
     let left = bench_source(data_left, &simulator, Side::Left);
     let right = bench_source(data_right, &simulator, Side::Right);
@@ -219,7 +220,7 @@ where
                 break;
             }
             Ok(Async::NotReady) => {
-                println!("=== REFILL ===");
+                //println!("=== REFILL ===");
                 simulator.borrow_mut().add_input_budget();
             }
             Err(e) => {
@@ -246,7 +247,7 @@ where
     bencher::<SymmetricHashJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
     bencher::<ProgressiveMergeJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
     bencher::<XJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
-    bencher::<HashMergeJoin<_, _, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), join::hash_merge::HMJConfig { memory_limit: memory, mem_parts_per_disk_part: memory / 40, num_partitions: memory / 2, fan_in: 1024, flushing_policy: join::hash_merge::flush::Adaptive { a: 10, b: 0.25 } });
+    bencher::<HashMergeJoin<_, _, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), join::hash_merge::HMJConfig { memory_limit: memory, mem_parts_per_disk_part: memory / 40, num_partitions: memory / 2, fan_in: 256, flushing_policy: join::hash_merge::flush::Adaptive { a: 10, b: 0.25 } });
     // TODO: hybrid hash join
 }
 
