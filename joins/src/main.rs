@@ -211,12 +211,12 @@ where
     }
     });
 
-    println!("Running {} ...", J::short_type_name());
+    //println!("Running {} ...", J::short_type_name());
     let mut collector = timed.collect();
     loop {
         match collector.poll() {
             Ok(Async::Ready(result)) => {
-                println!("{} RESULTS {:?} ({} items)", J::short_type_name(), (), result.len());
+                //println!("{} RESULTS {:?} ({} items)", J::short_type_name(), (), result.len());
                 break;
             }
             Ok(Async::NotReady) => {
@@ -224,12 +224,15 @@ where
                 simulator.borrow_mut().add_input_budget();
             }
             Err(e) => {
-                println!("{} error: {:?}", J::short_type_name(), e);
+                eprintln!("{} error: {:?}", J::short_type_name(), e);
                 return;
             }
         }
     }
-    println!("timings {}: {:?}", J::short_type_name(), timings);
+    //println!("timings {}: {:?}", J::short_type_name(), timings);
+    for (i, (intuples, dout, din)) in timings.into_iter().enumerate() {
+        println!("{} {} {} {} {}", i, J::short_type_name(), intuples, dout, din);
+    }
 }
 
 fn bench_all<D>(data_left: Vec<D::Left>, data_right: Vec<D::Right>, definition: D)
@@ -239,12 +242,13 @@ where
     D::Right: Clone + Debug,
     D::Output: Debug {
     let memory = 1024_0;
+    println!("Index Algorithm TuplesIn DiskOut DiskIn");
     //bencher::<NestedLoopJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), ());
     //bencher::<BlockNestedLoopJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 100024);
     //bencher::<OrderedMergeJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone());
     bencher::<SortMergeJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
     //bencher::<SimpleHashJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
-    bencher::<SymmetricHashJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
+    //bencher::<SymmetricHashJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
     bencher::<ProgressiveMergeJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
     bencher::<XJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
     bencher::<HashMergeJoin<_, _, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), join::hash_merge::HMJConfig { memory_limit: memory, mem_parts_per_disk_part: memory / 40, num_partitions: memory / 2, fan_in: 256, flushing_policy: join::hash_merge::flush::Adaptive { a: 10, b: 0.25 } });
