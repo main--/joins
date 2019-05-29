@@ -75,7 +75,7 @@ impl FlushingPolicy for Adaptive {
         let candidates = if self.is_balanced(all, memory_tuples) {
             // memory is balanced
             let acceptable = try_filter(memory_tuples.iter().enumerate(), |(_, &PartitionStats { left, right })| (left >= self.a) && (right >= self.a));
-            Either::Left(try_filter(acceptable, |&(i, _)| self.is_balanced(all, memory_tuples.iter().take(i).chain(memory_tuples.iter().skip(i + 1)))).inspect(|x| println!("candid {:?}", x)))
+            Either::Left(try_filter(acceptable, |&(i, _)| self.is_balanced(all, memory_tuples.iter().take(i).chain(memory_tuples.iter().skip(i + 1)))))
         } else {
             let candidates = memory_tuples.iter().enumerate()
                 // not sure why the paper does it exactly like /this/ but this is what they propose
