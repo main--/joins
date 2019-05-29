@@ -131,6 +131,8 @@ impl<L, R, D, E> Stream for ProgressiveMergeJoin<L, R, D, E>
                             if let Async::Ready(Some(r)) = r {
                                 i.right_buf.push(r);
                             }
+                            // *might* be incorrect, depending on how you look at it
+                            // (in the face of left/right having different speed)
                             if i.left_buf.len() + i.right_buf.len() >= i.memory_limit {
                                 i.flush_buffers();
                             }

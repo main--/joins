@@ -157,8 +157,11 @@ impl<L, R, D, E, F> Stream for HashMergeJoin<L, R, D, E, F>
                     Async::Ready(None) => {
                         // merge complete, write merged partitions back to disk
                         drop(merge.omj);
-                        self.parts_l.disk[merge.disk_partition].push(self.common.storage.store(merge.recv_left.unpack().into_iter().map(|(_, x)| x).collect()));
-                        self.parts_r.disk[merge.disk_partition].push(self.common.storage.store(merge.recv_right.unpack().into_iter().map(|(_, x)| x).collect()));
+
+                        if !self.left.is_done() || !self.right.is_done() {
+                            self.parts_l.disk[merge.disk_partition].push(self.common.storage.store(merge.recv_left.unpack().into_iter().map(|(_, x)| x).collect()));
+                            self.parts_r.disk[merge.disk_partition].push(self.common.storage.store(merge.recv_right.unpack().into_iter().map(|(_, x)| x).collect()));
+                        }
                     }
                     Async::NotReady => unreachable!(),
                 }
