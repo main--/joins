@@ -34,16 +34,67 @@ fn without_index<T, S: Stream<Item=(usize, T), Error=()>>(s: S) -> SortMergerNoI
 }
 existential type SortMergerNoIndex<T, S>: Stream<Item=T, Error=()>;
 
+
+use std::cmp::Ordering;
+struct SortMergerItem<D: MergePredicate, E: External<D::Left>> {
+    id: usize,
+    iter: E::Iter,
+    item: <E::Iter as Iterator>::Item,
+    predicate: Rc<D>,
+}
+impl<D: MergePredicate, E: External<D::Left>> SortMergerItem<D, E> {
+    fn new(id: usize, e: &E, predicate: &Rc<D>) -> Option<Self> {
+        let mut iter = e.fetch();
+        if let Some(item) = iter.next() {
+            Some(SortMergerItem {
+                id,
+                iter,
+                item,
+                predicate: Rc::clone(&predicate),
+            })
+        } else {
+            None
+        }
+    }
+    fn next(mut self) -> ((usize, <E::Iter as Iterator>::Item), Option<Self>) {
+        let ret = self.item;
+        let me = if let Some(next) = self.iter.next() {
+            Some(SortMergerItem {
+                id: self.id,
+                item: next,
+                iter: self.iter,
+                predicate: self.predicate,
+            })
+        } else {
+            None
+        };
+        ((self.id, ret), me)
+    }
+}
+impl<D: MergePredicate, E: External<D::Left>> PartialEq for SortMergerItem<D, E> {
+    fn eq(&self, rhs: &Self) -> bool {
+        self.cmp(rhs) == Ordering::Equal
+    }
+}
+impl<D: MergePredicate, E: External<D::Left>> Eq for SortMergerItem<D, E> {}
+impl<D: MergePredicate, E: External<D::Left>> PartialOrd for SortMergerItem<D, E> {
+    fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
+        Some(self.cmp(rhs))
+    }
+}
+impl<D: MergePredicate, E: External<D::Left>> Ord for SortMergerItem<D, E> {
+    fn cmp(&self, rhs: &Self) -> Ordering {
+        self.predicate.cmp_left(&self.item, &rhs.item).reverse() // reverse order to get a min-heap
+    }
+}
 pub struct SortMerger<D: MergePredicate, E: External<D::Left>> {
-    ways: Vec<Peekable<E::Iter>>,
-    predicate: D,
+    ways: std::collections::BinaryHeap<SortMergerItem<D, E>>,
 }
 impl<D: MergePredicate, E: External<D::Left>> SortMerger<D, E> {
     pub fn new(e: Vec<E>, predicate: D) -> Self {
-        SortMerger {
-            ways: e.into_iter().map(|x| x.fetch().peekable()).collect(),
-            predicate,
-        }
+        let rc = Rc::new(predicate);
+        let ways = e.into_iter().enumerate().filter_map(|(i, x)| SortMergerItem::new(i, &x, &rc)).collect();
+        SortMerger { ways }
     }
 }
 impl<D: MergePredicate, E: External<D::Left>> Stream for SortMerger<D, E> {
@@ -51,12 +102,14 @@ impl<D: MergePredicate, E: External<D::Left>> Stream for SortMerger<D, E> {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Option<(usize, D::Left)>, ()> {
-        let p = &self.predicate;
-        Ok(Async::Ready(match self.ways.iter_mut().enumerate().filter_map(|(i, x)| x.peek().map(|x| (i, x))).minmax_by(|(_, a), (_, b)| p.cmp_left(a, b)) {
-            MinMaxResult::NoElements => None,
-            MinMaxResult::OneElement((i, _)) | MinMaxResult::MinMax((i, _), _) => {
-                Some((i, self.ways[i].next().unwrap()))
+        Ok(Async::Ready(if let Some(x) = self.ways.pop() {
+            let (item, way) = x.next();
+            if let Some(way) = way {
+                self.ways.push(way);
             }
+            Some(item)
+        } else {
+            None
         }))
     }
 }
