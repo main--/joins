@@ -2,6 +2,7 @@
 
 use std::fmt::Debug;
 use std::rc::Rc;
+use std::cmp::Ordering;
 use std::cell::RefCell;
 use futures::{Future, Stream, Async, Poll};
 use named_type::NamedType;
@@ -73,6 +74,10 @@ struct IoSimulator {
 
     disk_ops_out: usize,
     disk_ops_in: usize,
+
+    predicate_calls: usize,
+    cmp_calls: usize,
+    hash_calls: usize,
 }
 impl IoSimulator {
     fn add_input_budget(&mut self) {
@@ -126,6 +131,10 @@ impl IoSimulator {
 
             disk_ops_out: 0,
             disk_ops_in: 0,
+
+            predicate_calls: 0,
+            cmp_calls: 0,
+            hash_calls: 0,
         }))
     }
 }
@@ -184,9 +193,46 @@ fn bench_source<T: Clone>(data: Vec<T>, simulator: &Rc<RefCell<IoSimulator>>, si
 // TODO: delet this
 existential type BenchSource<T>: Stream<Item=T, Error=()> + Rescan;
 
+struct BenchPredicate<P>(P, Rc<RefCell<IoSimulator>>);
+impl<P: JoinPredicate> JoinPredicate for BenchPredicate<P> {
+    type Left = P::Left;
+    type Right = P::Right;
+    type Output = P::Output;
+
+    fn eq(&self, left: &Self::Left, right: &Self::Right) -> Option<Self::Output> {
+        self.1.borrow_mut().predicate_calls += 1;
+        self.0.eq(left, right)
+    }
+}
+
+impl<P: MergePredicate> MergePredicate for BenchPredicate<P> {
+    fn cmp(&self, left: &Self::Left, right: &Self::Right) -> Option<Ordering> {
+        self.1.borrow_mut().cmp_calls += 1;
+        self.0.cmp(left, right)
+    }
+    fn cmp_left(&self, a: &Self::Left, b: &Self::Left) -> Ordering {
+        self.1.borrow_mut().cmp_calls += 1;
+        self.0.cmp_left(a, b)
+    }
+    fn cmp_right(&self, a: &Self::Right, b: &Self::Right) -> Ordering {
+        self.1.borrow_mut().cmp_calls += 1;
+        self.0.cmp_right(a, b)
+    }
+}
+impl<P: HashPredicate> HashPredicate for BenchPredicate<P> {
+    fn hash_left(&self, x: &Self::Left) -> u64 {
+        self.1.borrow_mut().hash_calls += 1;
+        self.0.hash_left(x)
+    }
+    fn hash_right(&self, x: &Self::Right) -> u64 {
+        self.1.borrow_mut().hash_calls += 1;
+        self.0.hash_right(x)
+    }
+}
+
 fn bencher<J, D, C>(data_left: Vec<D::Left>, data_right: Vec<D::Right>, definition: D, config: C)
 where
-    J: Join<BenchSource<D::Left>, BenchSource<D::Right>, D, BenchStorage, C> + NamedType,
+    J: Join<BenchSource<D::Left>, BenchSource<D::Right>, BenchPredicate<D>, BenchStorage, C> + NamedType,
     D: JoinPredicate,
     D::Left: Clone,
     D::Right: Clone,
@@ -194,21 +240,23 @@ where
     J::Error: Debug {
     let simulator = IoSimulator::new();
     simulator.borrow_mut().right_to_left = Fraction::new(2usize, 1usize);
-    //simulator.borrow_mut().input_batch_size = Fraction::new(1000000000usize ,1usize);
-    //simulator.borrow_mut().input_batch_size = Fraction::new(10000usize ,1usize);
+    //simulator.borrow_mut().input_batch_size = Fraction::new(1_000_000_000usize ,1usize);
+    //simulator.borrow_mut().input_batch_size = Fraction::new(20_000usize ,1usize);
     simulator.borrow_mut().disk_ops_per_refill = 15;
+    //simulator.borrow_mut().disk_ops_per_refill = 10;
 
     let left = bench_source(data_left, &simulator, Side::Left);
     let right = bench_source(data_right, &simulator, Side::Right);
 
-    let join = J::build(left, right, definition, BenchStorage(Rc::clone(&simulator)), config);
+    let join = J::build(left, right, BenchPredicate(definition, Rc::clone(&simulator)), BenchStorage(Rc::clone(&simulator)), config);
 
-    let mut timings = Vec::new();
+    //let mut timings = Vec::new();
+    let mut i = 0;
     let timed = join.inspect(|_| {
-    timings.push((simulator.borrow().read_tuple_count, simulator.borrow().disk_ops_out, simulator.borrow().disk_ops_in));
-    if timings.len() % 100 == 0 {
-    //println!("{}", timings.len());
-    }
+    let simulator = simulator.borrow();
+    //timings.push((simulator.read_tuple_count, simulator.disk_ops_out, simulator.disk_ops_in, simulator.predicate_calls));
+    println!("{} {} {} {} {} {} {} {}", i, J::short_type_name(), simulator.read_tuple_count, simulator.disk_ops_out, simulator.disk_ops_in, simulator.predicate_calls, simulator.cmp_calls, simulator.hash_calls);
+    i += 1;
     });
 
     //println!("Running {} ...", J::short_type_name());
@@ -230,9 +278,10 @@ where
         }
     }
     //println!("timings {}: {:?}", J::short_type_name(), timings);
-    for (i, (intuples, dout, din)) in timings.into_iter().enumerate() {
-        println!("{} {} {} {} {}", i, J::short_type_name(), intuples, dout, din);
-    }
+    /*
+    for (i, (intuples, dout, din, predicate)) in timings.into_iter().enumerate() {
+        println!("{} {} {} {} {} {}", i, J::short_type_name(), intuples, dout, din, predicate);
+    }*/
 }
 
 fn bench_all<D>(data_left: Vec<D::Left>, data_right: Vec<D::Right>, definition: D)
@@ -241,17 +290,23 @@ where
     D::Left: Clone + Debug,
     D::Right: Clone + Debug,
     D::Output: Debug {
-    let memory = 1024_0;
-    println!("Index Algorithm TuplesIn DiskOut DiskIn");
+    let memory = 10000;
+    println!("Index Algorithm TuplesIn DiskOut DiskIn PredicateCalls CmpCalls HashCalls");
     //bencher::<NestedLoopJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), ());
-    //bencher::<BlockNestedLoopJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), 100024);
-    //bencher::<OrderedMergeJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone());
+    //bencher::<BlockNestedLoopJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
+    //bencher::<OrderedMergeJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), ());
     bencher::<SortMergeJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
     //bencher::<SimpleHashJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
     //bencher::<SymmetricHashJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
     bencher::<ProgressiveMergeJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
     bencher::<XJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
-    bencher::<HashMergeJoin<_, _, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), join::hash_merge::HMJConfig { memory_limit: memory, mem_parts_per_disk_part: memory / 40, num_partitions: memory / 2, fan_in: 256, flushing_policy: join::hash_merge::flush::Adaptive { a: 10, b: 0.25 } });
+    bencher::<HashMergeJoin<_, _, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), join::hash_merge::HMJConfig {
+        memory_limit: memory,
+        mem_parts_per_disk_part: memory / 20,
+        num_partitions: memory / 2,
+        fan_in: 256,
+        flushing_policy: join::hash_merge::flush::Adaptive { a: 10, b: 0.25 },
+    });
     // TODO: hybrid hash join
 }
 
@@ -267,7 +322,7 @@ fn main() {
     //let right_sorted: Vec<i32> = (10..20).chain(0..10).collect();
     
     let mut left_sorted: Vec<i32> = (0..1_000_000).collect();
-    let mut right_sorted: Vec<i32> = (0..1_000_000).collect();
+    let mut right_sorted: Vec<i32> = (0..1_00_000).collect();
     
     let mut rng = SmallRng::seed_from_u64(42);
     left_sorted.shuffle(&mut rng);

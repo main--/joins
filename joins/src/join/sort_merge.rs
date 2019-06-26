@@ -1,9 +1,7 @@
-use std::iter::Peekable;
 use std::rc::Rc;
 use futures::{Stream, Poll, Async, stream};
 use named_type::NamedType;
 use named_type_derive::*;
-use itertools::{Itertools, MinMaxResult};
 
 use super::{Join, OrderedMergeJoin, External, ExternalStorage};
 use crate::predicate::{JoinPredicate, MergePredicate, SwitchPredicate};
