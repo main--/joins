@@ -18,7 +18,7 @@ use super::*;
 /// # Example
 ///
 /// ```
-/// use joins::predicate::EquiJoin;
+/// use joins::EquiJoin;
 /// #[derive(Clone, Debug)]
 /// struct Left { a: i32, b: i32, c: i32 }
 /// #[derive(Clone, Debug)]
