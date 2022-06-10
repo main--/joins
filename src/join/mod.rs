@@ -1,5 +1,7 @@
 use std::borrow::Borrow;
+use std::convert::Infallible;
 use futures::Stream;
+use crate::{IntoIterReady, IterReady, IterSource};
 
 mod nested_loop;
 pub use self::nested_loop::NestedLoopJoin;
@@ -40,6 +42,35 @@ pub trait Join<Left, Right, Definition, ExtStorage, Config>: Stream<Item=Definit
         storage: ExtStorage,
         config: Config) -> Self;
 }
+pub trait JoinInMemory<Left, Right, Definition, Config>
+where
+    Left: IntoIterator,
+    Left::IntoIter: Clone,
+    Right: IntoIterator,
+    Right::IntoIter: Clone,
+    Left::Item: Borrow<Definition::Left>,
+    Right::Item: Borrow<Definition::Right>,
+    Definition: JoinPredicate,
+    Self: Join<IterSource<Left::IntoIter>, IterSource<Right::IntoIter>, Definition, (), Config>,
+    Self: Stream<Error = Infallible>,
+    Self: Sized,
+{
+    fn build_in_memory(left: Left, right: Right, definition: Definition, config: Config,) -> IterReady<Self>{
+        Self::build(IterSource::new(left), IterSource::new(right), definition, (), config).iter_ready()
+    }
+}
+impl<J, Left, Right, Definition, Config> JoinInMemory<Left, Right, Definition, Config> for J
+where
+    J: Join<IterSource<Left::IntoIter>, IterSource<Right::IntoIter>, Definition, (), Config>,
+    J: Stream<Error = Infallible>,
+    Left: IntoIterator,
+    Left::IntoIter: Clone,
+    Right: IntoIterator,
+    Right::IntoIter: Clone,
+    Left::Item: Borrow<Definition::Left>,
+    Right::Item: Borrow<Definition::Right>,
+    Definition: JoinPredicate
+{}
 
 pub trait ExternalStorage<T> {
     type External: External<T>;
