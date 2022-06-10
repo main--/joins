@@ -5,7 +5,6 @@ use std::cmp::Ordering;
 use futures::{Future, Stream, Poll, Async, stream};
 use named_type::NamedType;
 use named_type_derive::*;
-use debug_everything::Debuggable;
 
 use super::{Join, Rescan, OrderedMergeJoin, ExternalStorage};
 use super::sort_merge::SortMerger;

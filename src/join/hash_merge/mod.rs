@@ -5,7 +5,6 @@ use futures::{Stream, Poll, Async, stream};
 use named_type::NamedType;
 use named_type_derive::*;
 use itertools::Itertools;
-use debug_everything::Debuggable;
 
 use super::{Join, ExternalStorage, OrderedMergeJoin};
 use super::sort_merge::SortMerger;
@@ -117,8 +116,10 @@ impl<L, R, D, E, F> HashMergeJoin<L, R, D, E, F>
         }
     }
 
+    #[cfg(feature = "debug")]
     #[allow(dead_code)]
     fn print_memory(&self) {
+        use debug_everything::Debuggable;
         for (i, (l, r)) in self.parts_l.mem.iter().zip(&self.parts_r.mem).enumerate() {
             println!("PARTITION#{}", i);
             print!("left: ");
