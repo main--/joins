@@ -174,7 +174,7 @@ impl<L, R, D, E> MainPhase<L, R, D, E>
     }
 }
 
-existential type CleanupPhase<L, R, D: JoinPredicate, E>: Iterator<Item=D::Output>;
+type CleanupPhase<L: Stream, R: Stream, D: JoinPredicate, E: ExternalStorage<Timestamped<L::Item>> + ExternalStorage<Timestamped<R::Item>>> = impl Iterator<Item=D::Output>;
 
 impl<L, R, D, E> Stream for XJoin<L, R, D, E>
     where

@@ -30,7 +30,7 @@ type Merger<D, E> = SortMergerNoIndex<<D as JoinPredicate>::Left, SortMerger<D, 
 fn without_index<T, S: Stream<Item=(usize, T), Error=()>>(s: S) -> SortMergerNoIndex<T, S> {
     s.map(|(_, x)| x)
 }
-existential type SortMergerNoIndex<T, S>: Stream<Item=T, Error=()>;
+type SortMergerNoIndex<T, S: Stream<Item=(usize, T), Error=()>> = impl Stream<Item=T, Error=()>;
 
 
 use std::cmp::Ordering;

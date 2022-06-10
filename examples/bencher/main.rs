@@ -1,19 +1,14 @@
-#![feature(existential_type)]
+#![feature(type_alias_impl_trait)]
 
 use std::fmt::Debug;
 use std::rc::Rc;
 use std::cmp::Ordering;
 use std::cell::RefCell;
-use futures::{Future, Stream, Async, Poll};
+use futures::{Async, Future, Poll, Stream};
 use named_type::NamedType;
 use rand::prelude::*;
 
-
-mod predicate;
-use predicate::*;
-mod join;
-use join::*;
-mod value_skimmer;
+use joins::*;
 
 
 pub struct BenchStorage(Rc<RefCell<IoSimulator>>);
@@ -191,7 +186,7 @@ fn bench_source<T: Clone>(data: Vec<T>, simulator: &Rc<RefCell<IoSimulator>>, si
 }
 
 // TODO: delet this
-existential type BenchSource<T>: Stream<Item=T, Error=()> + Rescan;
+type BenchSource<T: Clone> = impl Stream<Item=T, Error=()> + Rescan;
 
 struct BenchPredicate<P>(P, Rc<RefCell<IoSimulator>>);
 impl<P: JoinPredicate> JoinPredicate for BenchPredicate<P> {
@@ -300,12 +295,12 @@ where
     //bencher::<SymmetricHashJoin<_, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
     bencher::<ProgressiveMergeJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
     bencher::<XJoin<_, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), memory);
-    bencher::<HashMergeJoin<_, _, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), join::hash_merge::HMJConfig {
+    bencher::<HashMergeJoin<_, _, _, _, _>, _, _>(data_left.clone(), data_right.clone(), definition.clone(), hash_merge::HMJConfig {
         memory_limit: memory,
         mem_parts_per_disk_part: memory / 20,
         num_partitions: memory / 2,
         fan_in: 256,
-        flushing_policy: join::hash_merge::flush::Adaptive { a: 10, b: 0.25 },
+        flushing_policy: hash_merge::flush::Adaptive { a: 10, b: 0.25 },
     });
     // TODO: hybrid hash join
 }
