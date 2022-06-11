@@ -2,9 +2,9 @@ use std::cmp::Ordering;
 
 use super::{JoinPredicate, MergePredicate, HashPredicate};
 
-pub struct SwitchPredicate<P>(pub P);
+pub struct SwapPredicate<P>(pub P);
 
-impl<P: JoinPredicate> JoinPredicate for SwitchPredicate<P> {
+impl<P: JoinPredicate> JoinPredicate for SwapPredicate<P> {
     type Left = P::Right;
     type Right = P::Left;
     type Output = P::Output;
@@ -14,7 +14,7 @@ impl<P: JoinPredicate> JoinPredicate for SwitchPredicate<P> {
     }
 }
 
-impl<P: MergePredicate> MergePredicate for SwitchPredicate<P> {
+impl<P: MergePredicate> MergePredicate for SwapPredicate<P> {
     fn cmp(&self, left: &Self::Left, right: &Self::Right) -> Option<Ordering> {
         self.0.cmp(right, left)
     }
@@ -25,7 +25,7 @@ impl<P: MergePredicate> MergePredicate for SwitchPredicate<P> {
         self.0.cmp_left(a, b)
     }
 }
-impl<P: HashPredicate> HashPredicate for SwitchPredicate<P> {
+impl<P: HashPredicate> HashPredicate for SwapPredicate<P> {
     fn hash_left(&self, x: &Self::Left) -> u64 { self.0.hash_right(x) }
     fn hash_right(&self, x: &Self::Right) -> u64 { self.0.hash_left(x) }
 }
