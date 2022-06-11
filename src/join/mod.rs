@@ -13,6 +13,8 @@ mod sort_merge;
 pub use self::sort_merge::SortMergeJoin;
 mod simple_hash;
 pub use self::simple_hash::SimpleHashJoin;
+mod simple_anti_hash;
+pub use self::simple_anti_hash::SimpleAntiHashJoin;
 mod symmetric_hash;
 pub use self::symmetric_hash::SymmetricHashJoin;
 mod progressive_merge;

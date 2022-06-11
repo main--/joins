@@ -2,7 +2,13 @@ use std::cmp::Ordering;
 
 use super::{JoinPredicate, MergePredicate, HashPredicate};
 
-pub struct SwapPredicate<P>(pub P);
+pub struct SwapPredicate<P>(P);
+
+impl<P: JoinPredicate> SwapPredicate<P> {
+    pub fn new(predicate: P) -> Self {
+        SwapPredicate(predicate)
+    }
+}
 
 impl<P: JoinPredicate> JoinPredicate for SwapPredicate<P> {
     type Left = P::Right;
