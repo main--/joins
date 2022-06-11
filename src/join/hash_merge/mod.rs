@@ -9,7 +9,7 @@ use itertools::Itertools;
 use super::{Join, ExternalStorage, OrderedMergeJoin};
 use super::sort_merge::SortMerger;
 use super::progressive_merge::IgnoreIndexPredicate;
-use crate::predicate::{JoinPredicate, HashPredicate, MergePredicate, SwitchPredicate};
+use crate::predicate::{JoinPredicate, HashPredicate, MergePredicate, SwapPredicate};
 
 pub mod flush;
 use self::flush::{FlushingPolicy, PartitionStats};
@@ -40,7 +40,7 @@ pub struct MergePhase<L, R, D, E>
         R: Stream,
         D: MergePredicate<Left=L::Item, Right=R::Item>,
         E: ExternalStorage<L::Item> + ExternalStorage<R::Item> {
-    omj: OrderedMergeJoin<Merger<Rc<D>, E>, Merger<SwitchPredicate<Rc<D>>, E>, IgnoreIndexPredicate<Rc<D>>>,
+    omj: OrderedMergeJoin<Merger<Rc<D>, E>, Merger<SwapPredicate<Rc<D>>, E>, IgnoreIndexPredicate<Rc<D>>>,
     recv_left: ValueSinkRecv<(usize, L::Item), ()>,
     recv_right: ValueSinkRecv<(usize, R::Item), ()>,
     disk_partition: usize,
@@ -112,7 +112,7 @@ impl<L, R, D, E, F> HashMergeJoin<L, R, D, E, F>
             let partition_to_evict = self.common.config.flushing_policy.flush(&memory_table); // FIXME dont hardcode
             //println!("EVICTING {} because of {:?}", partition_to_evict, memory_table);
             self.parts_l.evict(partition_to_evict, &self.definition, &mut self.common);
-            self.parts_r.evict(partition_to_evict, &self.definition.by_ref().switch(), &mut self.common);
+            self.parts_r.evict(partition_to_evict, &self.definition.by_ref().swap(), &mut self.common);
         }
     }
 
@@ -177,14 +177,14 @@ impl<L, R, D, E, F> Stream for HashMergeJoin<L, R, D, E, F>
                     }
                     if let Async::Ready(Some(r)) = r {
                         self.check_eviction();
-                        self.parts_r.insert(r, &mut self.parts_l, &self.definition.by_ref().switch(), &mut self.common);
+                        self.parts_r.insert(r, &mut self.parts_l, &self.definition.by_ref().swap(), &mut self.common);
                     }
                 }
                 (Async::Ready(None), Async::Ready(None)) if self.common.total_inmemory != 0 => {
                     // inputs complete => flush all
                     for i in 0..self.parts_l.disk.len() {
                         self.parts_l.evict(i, &self.definition, &mut self.common);
-                        self.parts_r.evict(i, &self.definition.by_ref().switch(), &mut self.common);
+                        self.parts_r.evict(i, &self.definition.by_ref().swap(), &mut self.common);
                     }
                 }
                 (l, r) => {
@@ -201,7 +201,7 @@ impl<L, R, D, E, F> Stream for HashMergeJoin<L, R, D, E, F>
                         .collect())).next();
                     if let Some((i, l, r)) = merge {
                         let (send_left, recv_left) = ValueSink::new(SortMerger::new(l, Rc::clone(&self.definition)));
-                        let (send_right, recv_right) = ValueSink::new(SortMerger::new(r, Rc::clone(&self.definition).switch()));
+                        let (send_right, recv_right) = ValueSink::new(SortMerger::new(r, Rc::clone(&self.definition).swap()));
 
                         self.merge = Some(MergePhase {
                             disk_partition: i,

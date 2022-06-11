@@ -31,7 +31,7 @@ impl<L, R, D> Stream for SimpleHashJoin<L, R, D>
                 return Ok(Async::Ready(Some(buffered)));
             } else if (self.table_entries < self.memory_limit) && !self.left.is_done() {
                 // build phase
-                if let Some(left) =  try_ready!(self.left.poll()) {
+                if let Some(left) = try_ready!(self.left.poll()) {
                     self.table.insert(self.definition.hash_left(&left), left);
                     self.table_entries += 1;
                 }

@@ -24,7 +24,7 @@ use super::*;
 /// #[derive(Clone, Debug)]
 /// struct Right { x: i32, y: i32, z: i32 }
 ///
-/// EquiJoin::new(|x: &Left| (x.a, x.c), |x: &Right| (x.z, x.y * 2));
+/// EquiJoin::new(|l: &Left| (l.a, l.c), |r: &Right| (r.z, r.y * 2));
 /// ```
 ///
 /// This example shows the join predicate `Left.a = Right.z AND Left.c = Right.y * 2`.

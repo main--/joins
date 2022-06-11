@@ -4,7 +4,7 @@ use named_type::NamedType;
 use named_type_derive::*;
 
 use super::{Join, OrderedMergeJoin, External, ExternalStorage};
-use crate::predicate::{JoinPredicate, MergePredicate, SwitchPredicate};
+use crate::predicate::{JoinPredicate, MergePredicate, SwapPredicate};
 
 #[derive(NamedType)]
 pub enum SortMergeJoin<L: Stream, R: Stream, D: MergePredicate<Left=L::Item, Right=R::Item>, E>
@@ -22,7 +22,7 @@ pub enum SortMergeJoin<L: Stream, R: Stream, D: MergePredicate<Left=L::Item, Rig
         left_blocks: Vec<<E as ExternalStorage<L::Item>>::External>,
         right_blocks: Vec<<E as ExternalStorage<R::Item>>::External>,
     },
-    OutputPhase(OrderedMergeJoin<Merger<Rc<D>, E>, Merger<SwitchPredicate<Rc<D>>, E>, Rc<D>>),
+    OutputPhase(OrderedMergeJoin<Merger<Rc<D>, E>, Merger<SwapPredicate<Rc<D>>, E>, Rc<D>>),
     Tmp,
 }
 type Merger<D, E> = SortMergerNoIndex<<D as JoinPredicate>::Left, SortMerger<D, <E as ExternalStorage<<D as JoinPredicate>::Left>>::External>>;
@@ -171,7 +171,7 @@ impl<L, R, D, E> Stream for SortMergeJoin<L, R, D, E>
                     let definition = Rc::new(definition);
 
                     let left = without_index(SortMerger::new(left_blocks, definition.clone()));
-                    let right = without_index(SortMerger::new(right_blocks, definition.clone().switch()));
+                    let right = without_index(SortMerger::new(right_blocks, definition.clone().swap()));
 
                     SortMergeJoin::OutputPhase(OrderedMergeJoin::new(left, right, definition))
                 }
