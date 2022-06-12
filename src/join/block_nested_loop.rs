@@ -2,12 +2,12 @@ use std::collections::VecDeque;
 use futures::{Stream, Poll, try_ready, Async, stream};
 use named_type::NamedType;
 use named_type_derive::*;
+use crate::InnerJoinPredicate;
 
 use super::{Join, Rescan};
-use crate::predicate::JoinPredicate;
 
 #[derive(NamedType)]
-pub struct BlockNestedLoopJoin<L: Stream, R: Stream, D: JoinPredicate> {
+pub struct BlockNestedLoopJoin<L: Stream, R: Stream, D: InnerJoinPredicate> {
     left: stream::Fuse<L>,
     right: R,
     definition: D,
@@ -18,7 +18,7 @@ pub struct BlockNestedLoopJoin<L: Stream, R: Stream, D: JoinPredicate> {
 impl<L, R, D> Stream for BlockNestedLoopJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error> + Rescan,
-          D: JoinPredicate<Left=L::Item, Right=R::Item> {
+          D: InnerJoinPredicate<Left=L::Item, Right=R::Item> {
     type Item = D::Output;
     type Error = L::Error;
 
@@ -47,7 +47,7 @@ TODO: need to reset Fuse somehow
 impl<L, R, D> Rescan for BlockNestedLoopJoin<L, R, D>
     where L: Stream + Rescan,
           R: Stream<Error=L::Error> + Rescan,
-          D: JoinPredicate<Left=L::Item, Right=R::Item> {
+          D: InnerJoinPredicate<Left=L::Item, Right=R::Item> {
     fn rescan(&mut self) {
         self.left.rescan();
         self.right.rescan();
@@ -61,7 +61,7 @@ impl<L, R, D> Rescan for BlockNestedLoopJoin<L, R, D>
 impl<L, R, D, E> Join<L, R, D, E, usize> for BlockNestedLoopJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error> + Rescan,
-          D: JoinPredicate<Left=L::Item, Right=R::Item> {
+          D: InnerJoinPredicate<Left=L::Item, Right=R::Item> {
     fn build(left: L, right: R, definition: D, _: E, memory_size: usize) -> Self {
         BlockNestedLoopJoin { left: left.fuse(), right, definition, buffer: Vec::with_capacity(memory_size), output_buffer: VecDeque::new() }
     }

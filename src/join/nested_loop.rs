@@ -1,6 +1,7 @@
 use futures::{Stream, Poll, try_ready, Async, stream};
 use named_type::NamedType;
 use named_type_derive::*;
+use crate::InnerJoinPredicate;
 
 use super::{Join, Rescan};
 use crate::predicate::JoinPredicate;
@@ -15,7 +16,7 @@ pub struct NestedLoopJoin<L: Stream, R: Stream, D> {
 impl<L, R, D> Stream for NestedLoopJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error> + Rescan,
-          D: JoinPredicate<Left=L::Item, Right=R::Item> {
+          D: InnerJoinPredicate + JoinPredicate<Left=L::Item, Right=R::Item> {
     type Item = D::Output;
     type Error = L::Error;
 
@@ -60,7 +61,7 @@ impl<L, R, D> NestedLoopJoin<L, R, D>
 impl<L, R, D, E> Join<L, R, D, E, ()> for NestedLoopJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error> + Rescan,
-          D: JoinPredicate<Left=L::Item, Right=R::Item> {
+          D: InnerJoinPredicate + JoinPredicate<Left=L::Item, Right=R::Item> {
     fn build(left: L, right: R, definition: D, _: E, _: ()) -> Self {
         NestedLoopJoin::new(left, right, definition)
     }

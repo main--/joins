@@ -34,6 +34,8 @@ type SortMergerNoIndex<T, S: Stream<Item=(usize, T), Error=()>> = impl Stream<It
 
 
 use std::cmp::Ordering;
+use crate::InnerJoinPredicate;
+
 struct SortMergerItem<D: MergePredicate, E: External<D::Left>> {
     id: usize,
     iter: E::Iter,
@@ -132,7 +134,7 @@ fn manage_buf<T, E: ExternalStorage<T>, F: Fn(&T, &T) -> std::cmp::Ordering>(
 impl<L, R, D, E> Stream for SortMergeJoin<L, R, D, E>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          D: MergePredicate<Left=L::Item, Right=R::Item>,
+          D: InnerJoinPredicate + MergePredicate<Left=L::Item, Right=R::Item>,
           E: ExternalStorage<L::Item> + ExternalStorage<R::Item> {
     type Item = D::Output;
     type Error = L::Error;
@@ -184,7 +186,7 @@ impl<L, R, D, E> Stream for SortMergeJoin<L, R, D, E>
 impl<L, R, D, E> Join<L, R, D, E, usize> for SortMergeJoin<L, R, D, E>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          D: MergePredicate<Left=L::Item, Right=R::Item>,
+          D: InnerJoinPredicate + MergePredicate<Left=L::Item, Right=R::Item>,
           E: ExternalStorage<L::Item> + ExternalStorage<R::Item> {
     fn build(left: L, right: R, definition: D, storage: E, main_memory: usize) -> Self {
         SortMergeJoin::InputPhase {

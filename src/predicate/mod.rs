@@ -24,6 +24,7 @@
 use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::rc::Rc;
+use std::sync::Arc;
 
 mod equijoin;
 pub use equijoin::EquiJoin;
@@ -35,9 +36,6 @@ pub use map::{MapLeftPredicate, MapRightPredicate, MapOutputPredicate};
 pub trait JoinPredicate {
     type Left;
     type Right;
-    type Output;
-
-    fn eq(&self, left: &Self::Left, right: &Self::Right) -> Option<Self::Output>;
 
     fn swap(self) -> SwapPredicate<Self> where Self: Sized {
         SwapPredicate::new(self)
@@ -61,17 +59,25 @@ pub trait JoinPredicate {
         MapRightPredicate::new(self, mapping)
     }
 
-    fn map<F, O>(self, mapping: F) -> MapOutputPredicate<Self, F, Self::Output, O>
-        where
-            F: Fn(Self::Output) -> O,
-            Self: Sized,
-    {
-        MapOutputPredicate::new(self, mapping)
-    }
-
     fn by_ref(&self) -> &Self {
         self
     }
+}
+
+pub trait InnerJoinPredicate: JoinPredicate {
+    type Output;
+    fn eq(&self, left: &Self::Left, right: &Self::Right) -> Option<Self::Output>;
+
+    fn map<F, O>(self, mapping: F) -> MapOutputPredicate<Self, F, Self::Output, O>
+    where
+        F: Fn(Self::Output) -> O,
+        Self: Sized,
+    {
+        MapOutputPredicate::new(self, mapping)
+    }
+}
+pub trait OuterJoinPredicate: JoinPredicate {
+    fn eq(&self, left: &Self::Left, right: &Self::Right) -> bool;
 }
 
 pub trait MergePredicate: JoinPredicate {
@@ -85,53 +91,42 @@ pub trait HashPredicate: JoinPredicate {
     fn hash_right(&self, x: &Self::Right) -> u64;
 }
 
-impl<'a, T: JoinPredicate> JoinPredicate for &'a T {
-    type Left = T::Left;
-    type Right = T::Right;
-    type Output = T::Output;
+macro_rules! blanket_impl {
+    ($($lt:lifetime)?, $t:ty) => {
+        impl<$($lt,)? T: JoinPredicate> JoinPredicate for $t {
+            type Left = T::Left;
+            type Right = T::Right;
+        }
+        impl<$($lt,)? T: InnerJoinPredicate> InnerJoinPredicate for $t {
+            type Output = T::Output;
 
-    fn eq(&self, left: &Self::Left, right: &Self::Right) -> Option<Self::Output> {
-        (*self).eq(left, right)
+            fn eq(&self, left: &Self::Left, right: &Self::Right) -> Option<Self::Output> {
+                (**self).eq(left, right)
+            }
+        }
+        impl<$($lt,)? T: OuterJoinPredicate> OuterJoinPredicate for $t {
+            fn eq(&self, left: &Self::Left, right: &Self::Right) -> bool {
+                (**self).eq(left, right)
+            }
+        }
+        impl<$($lt,)? T: MergePredicate> MergePredicate for $t {
+            fn cmp(&self, left: &Self::Left, right: &Self::Right) -> Option<Ordering> {
+                (**self).cmp(left, right)
+            }
+            fn cmp_left(&self, a: &Self::Left, b: &Self::Left) -> Ordering {
+                (**self).cmp_left(a, b)
+            }
+            fn cmp_right(&self, a: &Self::Right, b: &Self::Right) -> Ordering {
+                (**self).cmp_right(a, b)
+            }
+        }
+        impl<$($lt,)? T: HashPredicate> HashPredicate for $t {
+            fn hash_left(&self, x: &Self::Left) -> u64 { (**self).hash_left(x) }
+            fn hash_right(&self, x: &Self::Right) -> u64 { (**self).hash_right(x) }
+        }
     }
-}
-impl<'a, T: MergePredicate> MergePredicate for &'a T {
-    fn cmp(&self, left: &Self::Left, right: &Self::Right) -> Option<Ordering> {
-        (*self).cmp(left, right)
-    }
-    fn cmp_left(&self, a: &Self::Left, b: &Self::Left) -> Ordering {
-        (*self).cmp_left(a, b)
-    }
-    fn cmp_right(&self, a: &Self::Right, b: &Self::Right) -> Ordering {
-        (*self).cmp_right(a, b)
-    }
-}
-impl<'a, T: HashPredicate> HashPredicate for &'a T {
-    fn hash_left(&self, x: &Self::Left) -> u64 { (*self).hash_left(x) }
-    fn hash_right(&self, x: &Self::Right) -> u64 { (*self).hash_right(x) }
-}
-
-impl<T: JoinPredicate> JoinPredicate for Rc<T> {
-    type Left = T::Left;
-    type Right = T::Right;
-    type Output = T::Output;
-
-    fn eq(&self, left: &Self::Left, right: &Self::Right) -> Option<Self::Output> {
-        self.as_ref().eq(left, right)
-    }
-}
-impl<T: MergePredicate> MergePredicate for Rc<T> {
-    fn cmp(&self, left: &Self::Left, right: &Self::Right) -> Option<Ordering> {
-        self.as_ref().cmp(left, right)
-    }
-    fn cmp_left(&self, a: &Self::Left, b: &Self::Left) -> Ordering {
-        self.as_ref().cmp_left(a, b)
-    }
-    fn cmp_right(&self, a: &Self::Right, b: &Self::Right) -> Ordering {
-        self.as_ref().cmp_right(a, b)
-    }
-}
-impl<T: HashPredicate> HashPredicate for Rc<T> {
-    fn hash_left(&self, x: &Self::Left) -> u64 { self.as_ref().hash_left(x) }
-    fn hash_right(&self, x: &Self::Right) -> u64 { self.as_ref().hash_right(x) }
 }
 
+blanket_impl!('a, &'a T);
+blanket_impl!(, Rc<T>);
+blanket_impl!(, Arc<T>);

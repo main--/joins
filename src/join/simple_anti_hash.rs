@@ -3,6 +3,7 @@ use futures::{Stream, Poll, Async, try_ready, stream};
 use multimap::MultiMap;
 use named_type::NamedType;
 use named_type_derive::*;
+use crate::OuterJoinPredicate;
 
 use super::{Join, Rescan};
 use crate::predicate::HashPredicate;
@@ -13,7 +14,7 @@ enum State<T> {
 }
 
 #[derive(NamedType)]
-pub struct SimpleAntiHashJoin<L: Stream, R: Stream, D: HashPredicate> {
+pub struct SimpleHashAntiJoin<L: Stream, R: Stream, D: HashPredicate> {
     definition: D,
     left: stream::Fuse<L>,
     right: R,
@@ -21,13 +22,13 @@ pub struct SimpleAntiHashJoin<L: Stream, R: Stream, D: HashPredicate> {
     table_entries: usize,
     memory_limit: usize,
 }
-impl<L, R, D> Stream for SimpleAntiHashJoin<L, R, D>
+impl<L, R, D> Stream for SimpleHashAntiJoin<L, R, D>
 where
     L: Stream,
     R: Stream<Error=L::Error> + Rescan,
-    D: HashPredicate<Left=L::Item, Right=R::Item, Output=L::Item>
+    D: HashPredicate + OuterJoinPredicate<Left=L::Item, Right=R::Item>
 {
-    type Item = D::Output;
+    type Item = L::Item;
     type Error = L::Error;
 
     fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
@@ -68,11 +69,9 @@ where
                     Some(vec) => vec,
                     None => continue,
                 };
-                let pos = match vec.iter().position(|left| definition.eq(left, &right).is_some()) {
-                    Some(pos) => pos,
-                    None => continue,
+                if let Some(pos) = vec.iter().position(|left| definition.eq(left, &right)) {
+                    vec.swap_remove(pos);
                 };
-                vec.swap_remove(pos);
             } else {
                 // probe phase complete, return to drain phase
                 self.right.rescan();
@@ -82,12 +81,12 @@ where
         }
     }
 }
-impl<L, R, D, E> Join<L, R, D, E, usize> for SimpleAntiHashJoin<L, R, D>
+impl<L, R, D, E> Join<L, R, D, E, usize> for SimpleHashAntiJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error> + Rescan,
-          D: HashPredicate<Left=L::Item, Right=R::Item, Output=L::Item> {
+          D: HashPredicate + OuterJoinPredicate<Left=L::Item, Right=R::Item> {
     fn build(left: L, right: R, definition: D, _: E, main_memory: usize) -> Self {
-        SimpleAntiHashJoin {
+        SimpleHashAntiJoin {
             definition,
             left: left.fuse(),
             right,
@@ -100,15 +99,14 @@ impl<L, R, D, E> Join<L, R, D, E, usize> for SimpleAntiHashJoin<L, R, D>
 
 #[cfg(test)]
 mod test {
-    use crate::{EquiJoin, JoinInMemory, JoinPredicate, SimpleAntiHashJoin};
+    use crate::{EquiJoin, JoinInMemory, SimpleHashAntiJoin};
 
     #[test]
     fn simple_anti_hash() {
-        let join = SimpleAntiHashJoin::build_in_memory(
+        let join = SimpleHashAntiJoin::build_in_memory(
             0..60,
             0..50,
-            EquiJoin::new(|&l: &i32| l, |&r: &i32| r)
-                .map(|(l, _)| l),
+            EquiJoin::new(|&l: &i32| l, |&r: &i32| r),
             usize::MAX,
         );
         let mut results: Vec<_> = join.collect();

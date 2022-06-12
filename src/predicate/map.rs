@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 use std::borrow::Borrow;
 use std::marker::PhantomData;
+use crate::{InnerJoinPredicate, OuterJoinPredicate};
 
 use super::{JoinPredicate, MergePredicate, HashPredicate};
 
@@ -34,13 +35,29 @@ impl<P, F, T, O> JoinPredicate for MapLeftPredicate<P, F, T, O>
 {
     type Left = T;
     type Right = P::Right;
+}
+impl<P, F, T, O> InnerJoinPredicate for MapLeftPredicate<P, F, T, O>
+where
+    P: InnerJoinPredicate,
+    F: Fn(&T) -> O,
+    O: Borrow<P::Left>,
+{
     type Output = P::Output;
 
     fn eq(&self, left: &Self::Left, right: &Self::Right) -> Option<Self::Output> {
         self.predicate.eq((self.mapping)(left).borrow(), right)
     }
 }
-
+impl<P, F, T, O> OuterJoinPredicate for MapLeftPredicate<P, F, T, O>
+    where
+        P: OuterJoinPredicate,
+        F: Fn(&T) -> O,
+        O: Borrow<P::Left>,
+{
+    fn eq(&self, left: &Self::Left, right: &Self::Right) -> bool {
+        self.predicate.eq((self.mapping)(left).borrow(), right)
+    }
+}
 impl<P, F, T, O> MergePredicate for MapLeftPredicate<P, F, T, O>
     where
         P: MergePredicate,
@@ -97,13 +114,29 @@ impl<P, F, T, O> JoinPredicate for MapRightPredicate<P, F, T, O>
 {
     type Left = P::Left;
     type Right = T;
+}
+impl<P, F, T, O> InnerJoinPredicate for MapRightPredicate<P, F, T, O>
+    where
+        P: InnerJoinPredicate,
+        F: Fn(&T) -> O,
+        O: Borrow<P::Right>,
+{
     type Output = P::Output;
 
     fn eq(&self, left: &Self::Left, right: &Self::Right) -> Option<Self::Output> {
         self.predicate.eq(left, (self.mapping)(right).borrow())
     }
 }
-
+impl<P, F, T, O> OuterJoinPredicate for MapRightPredicate<P, F, T, O>
+    where
+        P: OuterJoinPredicate,
+        F: Fn(&T) -> O,
+        O: Borrow<P::Right>,
+{
+    fn eq(&self, left: &Self::Left, right: &Self::Right) -> bool {
+        self.predicate.eq(left, (self.mapping)(right).borrow())
+    }
+}
 impl<P, F, T, O> MergePredicate for MapRightPredicate<P, F, T, O>
     where
         P: MergePredicate,
@@ -139,7 +172,7 @@ pub struct MapOutputPredicate<P, F, T, O> {
 
 impl<P, F, T, O> MapOutputPredicate<P, F, T, O>
     where
-        P: JoinPredicate,
+        P: InnerJoinPredicate,
         F: Fn(T) -> O,
 {
     pub fn new(predicate: P, mapping: F) -> Self {
@@ -153,21 +186,26 @@ impl<P, F, T, O> MapOutputPredicate<P, F, T, O>
 
 impl<P, F, T, O> JoinPredicate for MapOutputPredicate<P, F, T, O>
     where
-        P: JoinPredicate<Output = T>,
+        P: JoinPredicate,
         F: Fn(T) -> O,
 {
     type Left = P::Left;
     type Right = P::Right;
+}
+impl<P, F, T, O> InnerJoinPredicate for MapOutputPredicate<P, F, T, O>
+    where
+        P: InnerJoinPredicate<Output = T>,
+        F: Fn(T) -> O,
+{
     type Output = O;
 
     fn eq(&self, left: &Self::Left, right: &Self::Right) -> Option<Self::Output> {
         self.predicate.eq(left, right).map(&self.mapping)
     }
 }
-
 impl<P, F, T, O> MergePredicate for MapOutputPredicate<P, F, T, O>
     where
-        P: MergePredicate<Output = T>,
+        P: MergePredicate,
         F: Fn(T) -> O,
 {
     fn cmp(&self, left: &Self::Left, right: &Self::Right) -> Option<Ordering> { self.predicate.cmp(left, right) }
@@ -176,7 +214,7 @@ impl<P, F, T, O> MergePredicate for MapOutputPredicate<P, F, T, O>
 }
 impl<P, F, T, O> HashPredicate for MapOutputPredicate<P, F, T, O>
     where
-        P: HashPredicate<Output = T>,
+        P: HashPredicate,
         F: Fn(T) -> O,
 {
     fn hash_left(&self, x: &Self::Left) -> u64 { self.predicate.hash_left(x) }

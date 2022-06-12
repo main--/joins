@@ -75,14 +75,30 @@ where GetKeyLeft: Fn(&Left) -> KeyLeft,
       Right: Clone {
     type Left = Left;
     type Right = Right;
+}
+impl<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight> InnerJoinPredicate for EquiJoin<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight>
+    where GetKeyLeft: Fn(&Left) -> KeyLeft,
+          GetKeyRight: Fn(&Right) -> KeyRight,
+          KeyLeft: PartialEq<KeyRight>,
+          Left: Clone,
+          Right: Clone {
     type Output = (Left, Right);
-
     fn eq(&self, left: &Self::Left, right: &Self::Right) -> Option<Self::Output> {
         if (self.get_key_left)(left) == (self.get_key_right)(right) {
             Some((left.clone(), right.clone()))
         } else {
             None
         }
+    }
+}
+impl<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight> OuterJoinPredicate for EquiJoin<Left, Right, KeyLeft, KeyRight, GetKeyLeft, GetKeyRight>
+    where GetKeyLeft: Fn(&Left) -> KeyLeft,
+          GetKeyRight: Fn(&Right) -> KeyRight,
+          KeyLeft: PartialEq<KeyRight>,
+          Left: Clone,
+          Right: Clone {
+    fn eq(&self, left: &Self::Left, right: &Self::Right) -> bool {
+        (self.get_key_left)(left) == (self.get_key_right)(right)
     }
 }
 

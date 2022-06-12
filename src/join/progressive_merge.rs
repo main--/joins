@@ -5,6 +5,7 @@ use std::cmp::Ordering;
 use futures::{Future, Stream, Poll, Async, stream};
 use named_type::NamedType;
 use named_type_derive::*;
+use crate::InnerJoinPredicate;
 
 use super::{Join, Rescan, OrderedMergeJoin, ExternalStorage};
 use super::sort_merge::SortMerger;
@@ -14,7 +15,7 @@ pub struct InputPhase<L, R, D, E>
     where
         L: Stream,
         R: Stream,
-        D: MergePredicate<Left=L::Item, Right=R::Item>,
+        D: JoinPredicate<Left=L::Item, Right=R::Item> + MergePredicate + InnerJoinPredicate,
         E: ExternalStorage<L::Item> + ExternalStorage<R::Item> {
     definition: D,
     storage: E,
@@ -30,11 +31,12 @@ pub struct InputPhase<L, R, D, E>
 
 #[derive(NamedType)]
 pub enum ProgressiveMergeJoin<L, R, D, E>
-    where
-        L: Stream,
-        R: Stream,
-        D: MergePredicate<Left=L::Item, Right=R::Item>,
-        E: ExternalStorage<L::Item> + ExternalStorage<R::Item> {
+where
+    L: Stream,
+    R: Stream,
+    D: JoinPredicate<Left=L::Item, Right=R::Item> + MergePredicate + InnerJoinPredicate,
+    E: ExternalStorage<L::Item> + ExternalStorage<R::Item>
+{
     InputPhase(InputPhase<L, R, D, E>),
     OutputPhase {
         output_buffer: VecDeque<D::Output>,
@@ -44,10 +46,11 @@ pub enum ProgressiveMergeJoin<L, R, D, E>
 }
 
 impl<L, R, D, E> InputPhase<L, R, D, E>
-    where L: Stream,
-          R: Stream<Error=L::Error> + Rescan,
-          E: ExternalStorage<L::Item> + ExternalStorage<R::Item>,
-          D: MergePredicate<Left=L::Item, Right=R::Item> {
+where L: Stream,
+      R: Stream<Error=L::Error> + Rescan,
+      E: ExternalStorage<L::Item> + ExternalStorage<R::Item>,
+      D: JoinPredicate<Left=L::Item, Right=R::Item> + MergePredicate + InnerJoinPredicate,
+{
     fn flush_buffers(&mut self) {
         let definition = &self.definition;
         
@@ -72,14 +75,16 @@ pub struct IgnoreIndexPredicate<P>(pub P);
 impl<P: JoinPredicate> JoinPredicate for IgnoreIndexPredicate<P> {
     type Left = (usize, P::Left);
     type Right = (usize, P::Right);
+}
+impl<P: InnerJoinPredicate> InnerJoinPredicate for IgnoreIndexPredicate<P> {
     type Output = P::Output;
-    
+
     fn eq(&self, left: &Self::Left, right: &Self::Right) -> Option<P::Output> {
         // Progressive merge join: ignore previously joined tuples in merging phase
         if left.0 == right.0 {
             return None;
         }
-    
+
         self.0.eq(&left.1, &right.1)
     }
 }
@@ -99,7 +104,7 @@ impl<L, R, D, E> Stream for ProgressiveMergeJoin<L, R, D, E>
     where L: Stream,
           R: Stream<Error=L::Error> + Rescan,
           E: ExternalStorage<L::Item> + ExternalStorage<R::Item>,
-          D: MergePredicate<Left=L::Item, Right=R::Item> {
+          D: InnerJoinPredicate + MergePredicate<Left=L::Item, Right=R::Item> {
     type Item = D::Output;
     type Error = L::Error;
 
@@ -182,10 +187,11 @@ impl<L, R, D, E> Stream for ProgressiveMergeJoin<L, R, D, E>
     }
 }
 impl<L, R, D, E> Join<L, R, D, E, usize> for ProgressiveMergeJoin<L, R, D, E>
-    where L: Stream,
-          R: Stream<Error=L::Error> + Rescan,
-          E: ExternalStorage<L::Item> + ExternalStorage<R::Item>,
-          D: MergePredicate<Left=L::Item, Right=R::Item> {
+where L: Stream,
+      R: Stream<Error=L::Error> + Rescan,
+      E: ExternalStorage<L::Item> + ExternalStorage<R::Item>,
+      D: JoinPredicate<Left=L::Item, Right=R::Item> + MergePredicate + InnerJoinPredicate,
+{
     fn build(left: L, right: R, definition: D, storage: E, main_memory: usize) -> Self {
         ProgressiveMergeJoin::InputPhase(InputPhase {
             definition,

@@ -5,6 +5,7 @@ use futures::{Stream, Poll, Async, stream};
 use named_type::NamedType;
 use named_type_derive::*;
 use itertools::Itertools;
+use crate::InnerJoinPredicate;
 
 use super::{Join, ExternalStorage, OrderedMergeJoin};
 use super::sort_merge::SortMerger;
@@ -20,7 +21,7 @@ pub struct HashMergeJoin<L, R, D, E, F>
     where
         L: Stream,
         R: Stream,
-        D: MergePredicate<Left=L::Item, Right=R::Item>,
+        D: InnerJoinPredicate + MergePredicate<Left=L::Item, Right=R::Item>,
         E: ExternalStorage<L::Item> + ExternalStorage<R::Item> {
     left: stream::Fuse<L>,
     right: stream::Fuse<R>,
@@ -38,7 +39,7 @@ pub struct MergePhase<L, R, D, E>
     where
         L: Stream,
         R: Stream,
-        D: MergePredicate<Left=L::Item, Right=R::Item>,
+        D: InnerJoinPredicate + MergePredicate<Left=L::Item, Right=R::Item>,
         E: ExternalStorage<L::Item> + ExternalStorage<R::Item> {
     omj: OrderedMergeJoin<Merger<Rc<D>, E>, Merger<SwapPredicate<Rc<D>>, E>, IgnoreIndexPredicate<Rc<D>>>,
     recv_left: ValueSinkRecv<(usize, L::Item), ()>,
@@ -65,7 +66,7 @@ impl<T, E: ExternalStorage<T>> Partitions<T, E> {
        x.disk.resize_with(config.num_partitions / config.mem_parts_per_disk_part, Default::default);
        x
     }
-    fn evict<D: MergePredicate<Left=T>, F: FlushingPolicy>(&mut self, partition_to_evict: usize, definition: &D, common: &mut Common<D::Output, E, F>) {
+    fn evict<D: InnerJoinPredicate + MergePredicate<Left=T>, F: FlushingPolicy>(&mut self, partition_to_evict: usize, definition: &D, common: &mut Common<D::Output, E, F>) {
         let mut eviction: Vec<_> = self.mem.iter_mut().enumerate()
             .filter(|(i, _)| (i / common.config.mem_parts_per_disk_part) == partition_to_evict)
             .flat_map(|(_, x)| mem::replace(x, Vec::new())).collect();
@@ -84,7 +85,7 @@ impl<T, E: ExternalStorage<T>> Partitions<T, E> {
         definition: &D,
         common: &mut Common<D::Output, E, F>)
     where
-        D: MergePredicate + HashPredicate<Left=T>,
+        D: InnerJoinPredicate + MergePredicate + HashPredicate<Left=T>,
         E: ExternalStorage<D::Right>
     {
         let hash = (definition.hash_left(&item) % (self.mem.len() as u64)) as usize;
@@ -101,7 +102,7 @@ impl<L, R, D, E, F> HashMergeJoin<L, R, D, E, F>
     where
         L: Stream,
         R: Stream<Error=L::Error>,
-        D: HashPredicate<Left=L::Item, Right=R::Item> + MergePredicate,
+        D: InnerJoinPredicate + HashPredicate<Left=L::Item, Right=R::Item> + MergePredicate,
         F: FlushingPolicy,
         E: ExternalStorage<L::Item> + ExternalStorage<R::Item> {
     fn check_eviction(&mut self) {
@@ -135,7 +136,7 @@ impl<L, R, D, E, F> Stream for HashMergeJoin<L, R, D, E, F>
     where
         L: Stream,
         R: Stream<Error=L::Error>,
-        D: HashPredicate<Left=L::Item, Right=R::Item> + MergePredicate,
+        D: InnerJoinPredicate + HashPredicate<Left=L::Item, Right=R::Item> + MergePredicate,
         F: FlushingPolicy,
         E: ExternalStorage<L::Item> + ExternalStorage<R::Item> {
     type Item = D::Output;
@@ -244,7 +245,7 @@ impl<L, R, D, E, F> Join<L, R, D, E, HMJConfig<F>> for HashMergeJoin<L, R, D, E,
     where
         L: Stream,
         R: Stream<Error=L::Error>,
-        D: HashPredicate<Left=L::Item, Right=R::Item> + MergePredicate,
+        D: InnerJoinPredicate + HashPredicate<Left=L::Item, Right=R::Item> + MergePredicate,
         F: FlushingPolicy,
         E: ExternalStorage<L::Item> + ExternalStorage<R::Item> {
     fn build(left: L, right: R, definition: D, storage: E, config: HMJConfig<F>) -> Self {

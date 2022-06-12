@@ -192,6 +192,8 @@ struct BenchPredicate<P>(P, Rc<RefCell<IoSimulator>>);
 impl<P: JoinPredicate> JoinPredicate for BenchPredicate<P> {
     type Left = P::Left;
     type Right = P::Right;
+}
+impl<P: InnerJoinPredicate> InnerJoinPredicate for BenchPredicate<P> {
     type Output = P::Output;
 
     fn eq(&self, left: &Self::Left, right: &Self::Right) -> Option<Self::Output> {
@@ -199,7 +201,6 @@ impl<P: JoinPredicate> JoinPredicate for BenchPredicate<P> {
         self.0.eq(left, right)
     }
 }
-
 impl<P: MergePredicate> MergePredicate for BenchPredicate<P> {
     fn cmp(&self, left: &Self::Left, right: &Self::Right) -> Option<Ordering> {
         self.1.borrow_mut().cmp_calls += 1;
@@ -228,7 +229,7 @@ impl<P: HashPredicate> HashPredicate for BenchPredicate<P> {
 fn bencher<J, D, C>(data_left: Vec<D::Left>, data_right: Vec<D::Right>, definition: D, config: C)
 where
     J: Join<BenchSource<D::Left>, BenchSource<D::Right>, BenchPredicate<D>, BenchStorage, C> + NamedType,
-    D: JoinPredicate,
+    D: InnerJoinPredicate,
     D::Left: Clone,
     D::Right: Clone,
     D::Output: Debug,
@@ -281,7 +282,7 @@ where
 
 fn bench_all<D>(data_left: Vec<D::Left>, data_right: Vec<D::Right>, definition: D)
 where
-    D: HashPredicate + MergePredicate + Clone,
+    D: InnerJoinPredicate + HashPredicate + MergePredicate + Clone,
     D::Left: Clone + Debug,
     D::Right: Clone + Debug,
     D::Output: Debug {

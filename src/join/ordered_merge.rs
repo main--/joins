@@ -4,6 +4,7 @@ use std::cmp::Ordering;
 use futures::{Stream, Poll, try_ready, Async, stream};
 use named_type::NamedType;
 use named_type_derive::*;
+use crate::InnerJoinPredicate;
 
 use super::Join;
 use crate::predicate::MergePredicate;
@@ -26,7 +27,7 @@ impl<L, R, D> Stream for OrderedMergeJoin<L, R, D>
           R: Stream<Error=L::Error>,
           L::Item: Borrow<D::Left>,
           R::Item: Borrow<D::Right>,
-          D: MergePredicate {
+          D: InnerJoinPredicate + MergePredicate {
     type Item = D::Output;
     type Error = L::Error;
 
@@ -114,7 +115,7 @@ impl<L, R, D, E> Join<L, R, D, E, ()> for OrderedMergeJoin<L, R, D>
           R: Stream<Error=L::Error>,
           L::Item: Borrow<D::Left>,
           R::Item: Borrow<D::Right>,
-          D: MergePredicate {
+          D: InnerJoinPredicate + MergePredicate {
     fn build(left: L, right: R, definition: D, _: E, _: ()) -> Self {
         OrderedMergeJoin::new(left, right, definition)
     }

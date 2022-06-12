@@ -5,7 +5,7 @@ use named_type::NamedType;
 use named_type_derive::*;
 
 use super::Join;
-use crate::predicate::HashPredicate;
+use crate::predicate::{HashPredicate, InnerJoinPredicate};
 
 #[derive(Debug)]
 pub enum Error<E> {
@@ -19,7 +19,7 @@ impl<E> From<E> for Error<E> {
 }
 
 #[derive(NamedType)]
-pub struct SymmetricHashJoin<L: Stream, R: Stream, D: HashPredicate> {
+pub struct SymmetricHashJoin<L: Stream, R: Stream, D: InnerJoinPredicate + HashPredicate> {
     definition: D,
     left: stream::Fuse<L>,
     right: stream::Fuse<R>,
@@ -32,7 +32,7 @@ pub struct SymmetricHashJoin<L: Stream, R: Stream, D: HashPredicate> {
 impl<L, R, D> Stream for SymmetricHashJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          D: HashPredicate<Left=L::Item, Right=R::Item> {
+          D: InnerJoinPredicate + HashPredicate<Left=L::Item, Right=R::Item> {
     type Item = D::Output;
     type Error = Error<L::Error>;
 
@@ -78,7 +78,7 @@ impl<L, R, D> Stream for SymmetricHashJoin<L, R, D>
 impl<L, R, D, E> Join<L, R, D, E, usize> for SymmetricHashJoin<L, R, D>
     where L: Stream,
           R: Stream<Error=L::Error>,
-          D: HashPredicate<Left=L::Item, Right=R::Item> {
+          D: InnerJoinPredicate + HashPredicate<Left=L::Item, Right=R::Item> {
     fn build(left: L, right: R, definition: D, _: E, main_memory: usize) -> Self {
         SymmetricHashJoin {
             definition,
