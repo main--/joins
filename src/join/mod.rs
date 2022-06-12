@@ -1,7 +1,7 @@
 use std::borrow::Borrow;
 use std::convert::Infallible;
 use futures::Stream;
-use crate::{IntoIterReady, IterReady, IterSource};
+use crate::{InnerJoinPredicate, IntoIterReady, IterReady, IterSource, OuterJoinPredicate};
 
 mod nested_loop;
 pub use self::nested_loop::NestedLoopJoin;
@@ -13,6 +13,8 @@ mod sort_merge;
 pub use self::sort_merge::SortMergeJoin;
 mod simple_hash;
 pub use self::simple_hash::SimpleHashJoin;
+mod simple_anti_hash;
+pub use self::simple_anti_hash::SimpleHashAntiJoin;
 mod symmetric_hash;
 pub use self::symmetric_hash::SymmetricHashJoin;
 mod progressive_merge;
@@ -29,7 +31,7 @@ pub trait Rescan: Stream {
     fn rescan(&mut self);
 }
 
-pub trait Join<Left, Right, Definition, ExtStorage, Config>: Stream<Item=Definition::Output>
+pub trait Join<Left, Right, Definition, ExtStorage, Config>: Stream
     where Left: Stream,
           Right: Stream<Error=Left::Error>,
           Left::Item: Borrow<Definition::Left>,
@@ -42,6 +44,48 @@ pub trait Join<Left, Right, Definition, ExtStorage, Config>: Stream<Item=Definit
         storage: ExtStorage,
         config: Config) -> Self;
 }
+
+pub trait InnerJoin<Left, Right, Definition, ExtStorage, Config>:
+    Join<Left, Right, Definition, ExtStorage, Config> + Stream<Item = Definition::Output>
+where
+    Left: Stream,
+    Right: Stream<Error=Left::Error>,
+    Left::Item: Borrow<Definition::Left>,
+    Right::Item: Borrow<Definition::Right>,
+    Definition: InnerJoinPredicate,
+{}
+
+impl<J, Left, Right, Definition, ExtStorage, Config> InnerJoin<Left, Right, Definition, ExtStorage, Config> for J
+where
+    J: Join<Left, Right, Definition, ExtStorage, Config>,
+    J: Stream<Item = Definition::Output>,
+    Left: Stream,
+    Right: Stream<Error=Left::Error>,
+    Left::Item: Borrow<Definition::Left>,
+    Right::Item: Borrow<Definition::Right>,
+    Definition: InnerJoinPredicate,
+{}
+
+pub trait LeftOuterJoin<Left, Right, Definition, ExtStorage, Config>:
+    Join<Left, Right, Definition, ExtStorage, Config> + Stream<Item = Left::Item>
+where
+    Left: Stream,
+    Right: Stream<Error=Left::Error>,
+    Left::Item: Borrow<Definition::Left>,
+    Right::Item: Borrow<Definition::Right>,
+    Definition: OuterJoinPredicate,
+{}
+impl<J, Left, Right, Definition, ExtStorage, Config> LeftOuterJoin<Left, Right, Definition, ExtStorage, Config> for J
+where
+    J: Join<Left, Right, Definition, ExtStorage, Config>,
+    J: Stream<Item = Left::Item>,
+    Left: Stream,
+    Right: Stream<Error=Left::Error>,
+    Left::Item: Borrow<Definition::Left>,
+    Right::Item: Borrow<Definition::Right>,
+    Definition: OuterJoinPredicate,
+{}
+
 pub trait JoinInMemory<Left, Right, Definition, Config>
 where
     Left: IntoIterator,
