@@ -14,9 +14,12 @@ itertools = "0.8"
 debug-everything = { version = "1.0", optional = true }
 rand = "0.6.5"
 either = "1.5.2"
+joins-derive = { path = "../joins-derive", optional = true }
 
 [features]
 debug = ["debug-everything"]
+derive = ["joins-derive"]
+default = ["derive"]
 
 [dev-dependencies]
 futures03 = { package = "futures", version = "0.3.21", features = ["compat"] }

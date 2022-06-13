@@ -42,10 +42,8 @@ where
 
 #[cfg(test)]
 mod test {
-    use std::marker::PhantomData;
-    use futures::{Future, Stream};
-    use crate::group_by::{GroupBy, GroupByPredicate};
-    use crate::{IterSource, NowOrNever};
+    use crate::{IterSource, NowOrNever, GroupByPredicate};
+    use crate::group_by::GroupBy;
 
     #[test]
     fn test() {
@@ -63,39 +61,8 @@ mod test {
             i: i32,
             kind: Kind,
         }
-        #[derive(Debug, Clone, PartialEq)]
+        #[derive(Debug, Clone, PartialEq, GroupByPredicate)]
         enum Kind { A, B, C }
-
-        struct GroupByKindPredicate<T, F: Fn(&T) -> &Kind> {
-            mapper: F,
-            _phantom: PhantomData<fn(&T) -> &Kind>,
-        }
-        impl<T, F: Fn(&T) -> &Kind> GroupByKindPredicate<T, F> {
-            fn new(mapper: F) -> GroupByKindPredicate<T, F> {
-                GroupByKindPredicate { mapper, _phantom: PhantomData }
-            }
-        }
-        impl<S, F> GroupByPredicate<S> for GroupByKindPredicate<S::Item, F>
-            where
-                S: Stream + 'static,
-                S::Item: 'static,
-                S::Error: 'static,
-                F: Fn(&S::Item) -> &Kind + 'static,
-        {
-            type Output = (Vec<S::Item>, Vec<S::Item>, Vec<S::Item>);
-            type Future = Box<dyn Future<Item = Self::Output, Error = S::Error>>;
-
-            fn consume(self, stream: S) -> Self::Future {
-                Box::new(stream.fold((Vec::new(), Vec::new(), Vec::new()), move |(mut a, mut b, mut c), item| {
-                    match (self.mapper)(&item) {
-                        Kind::A => a.push(item),
-                        Kind::B => b.push(item),
-                        Kind::C => c.push(item),
-                    }
-                    Ok((a, b, c))
-                }))
-            }
-        }
 
         let a = Foo { i: 0, kind: Kind::A };
         let b = Foo { i: 1, kind: Kind::A };
