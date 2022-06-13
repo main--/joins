@@ -3,6 +3,7 @@
 
 pub mod predicate;
 pub mod join;
+pub mod group_by;
 mod value_skimmer;
 mod in_memory;
 

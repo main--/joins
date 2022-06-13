@@ -1,5 +1,5 @@
 use std::convert::Infallible;
-use futures::{Async, Poll, Stream};
+use futures::{Async, Future, Poll, Stream};
 use crate::Rescan;
 
 pub struct IterSource<I: Iterator + Clone> {
@@ -55,3 +55,18 @@ impl<S: Stream<Error = Infallible>> IntoIterReady for S {
         IterReady(self)
     }
 }
+
+pub trait NowOrNever: Future {
+    fn now_or_never(self) -> Option<Self::Item>;
+}
+
+impl<F: Future<Error = Infallible>> NowOrNever for F {
+    fn now_or_never(mut self) -> Option<Self::Item> {
+        match self.poll() {
+            Ok(Async::Ready(item)) => Some(item),
+            Ok(Async::NotReady) => None,
+            Err(x) => match x {},
+        }
+    }
+}
+
