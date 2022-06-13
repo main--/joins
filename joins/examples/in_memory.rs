@@ -1,11 +1,13 @@
 use joins::{EquiJoin, JoinInMemory, SimpleHashJoin};
 
 #[derive(Debug, Clone)]
+#[allow(unused)]
 struct User {
     id: u64,
     name: String,
 }
 #[derive(Debug, Clone)]
+#[allow(unused)]
 struct Post {
     id: u64,
     user_id: u64,

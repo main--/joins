@@ -15,11 +15,13 @@ use tokio::task::{JoinError, JoinHandle};
 use joins::{EquiJoin, Join, Rescan, SimpleHashJoin};
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(unused)]
 struct User {
     id: u64,
     name: String,
 }
 #[derive(Debug, Clone, Deserialize)]
+#[allow(unused)]
 struct Post {
     id: u64,
     user_id: u64,

@@ -49,6 +49,7 @@ impl<T: Clone> Iterator for BenchIter<T> {
 
 
 #[derive(Clone, Debug)]
+#[allow(unused)]
 struct Tuple { a: i32, b: i32 }
 
 type Fraction = fraction::GenericFraction<usize>;
@@ -259,7 +260,7 @@ where
     let mut collector = timed.collect();
     loop {
         match collector.poll() {
-            Ok(Async::Ready(result)) => {
+            Ok(Async::Ready(_result)) => {
                 //println!("{} RESULTS {:?} ({} items)", J::short_type_name(), (), result.len());
                 break;
             }
