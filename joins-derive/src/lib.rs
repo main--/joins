@@ -7,7 +7,7 @@ use syn::{Data, DeriveInput, Fields, parse_macro_input};
 
 #[proc_macro_derive(GroupByPredicate)]
 pub fn derive_group_by_predicate(input: TokenStream) -> TokenStream {
-    let DeriveInput { attrs: _, vis: _, ident, generics: _, data } = parse_macro_input!(input);
+    let DeriveInput { attrs: _, vis, ident, generics: _, data } = parse_macro_input!(input);
 
     let e = match data {
         Data::Enum(e) => e,
@@ -38,12 +38,12 @@ pub fn derive_group_by_predicate(input: TokenStream) -> TokenStream {
     let arg_names: Vec<_> = arg_names.iter().map(|name| Ident::new(name, Span::call_site())).collect();
 
     (quote! {
-        struct #name<T, F: Fn(&T) -> &#ident> {
+        #vis struct #name<T, F: Fn(&T) -> &#ident> {
             mapper: F,
             _phantom: ::std::marker::PhantomData<fn(&T) -> &#ident>,
         }
         impl<T, F: Fn(&T) -> &#ident> #name<T, F> {
-            fn new(mapper: F) -> #name<T, F> {
+            #vis fn new(mapper: F) -> #name<T, F> {
                 #name { mapper, _phantom: ::std::marker::PhantomData }
             }
         }

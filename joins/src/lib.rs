@@ -17,6 +17,6 @@ pub use joins_derive::GroupByPredicate;
 
 /// reexports for joins-derive
 #[doc(hidden)]
-mod __private {
+pub mod __private {
     pub use ::futures::{Stream, Future};
 }
