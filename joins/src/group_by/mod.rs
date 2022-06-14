@@ -1,4 +1,5 @@
 use futures::{Future, Stream};
+use std::collections::HashMap;
 
 pub trait GroupBy: Stream + Sized {
     fn group_by<P: GroupByPredicate<Self>>(self, predicate: P) -> P::Future {
@@ -18,19 +19,38 @@ pub trait GroupByPredicate<S: Stream> {
     fn consume(self, stream: S) -> Self::Future;
 }
 
-impl<S, F> GroupByPredicate<S> for F
+pub trait GroupByPredicateFunctionOutput<S: Stream> {
+    type Output;
+    fn consume<F: Fn(&S::Item) -> Self + 'static>(f: F, stream: S) -> Box<dyn Future<Item = Self::Output, Error = S::Error>>;
+}
+
+impl<S, F, O> GroupByPredicate<S> for F
+    where
+        S: Stream + 'static,
+        S::Item: 'static,
+        S::Error: 'static,
+        F: Fn(&S::Item) -> O + 'static,
+        O: GroupByPredicateFunctionOutput<S>,
+{
+    type Output = O::Output;
+    type Future = Box<dyn Future<Item = Self::Output, Error = S::Error>>;
+
+    fn consume(self, stream: S) -> Self::Future {
+        O::consume(self, stream)
+    }
+}
+
+impl<S> GroupByPredicateFunctionOutput<S> for bool
 where
     S: Stream + 'static,
     S::Item: 'static,
     S::Error: 'static,
-    F: Fn(&S::Item) -> bool + 'static,
 {
     type Output = (Vec<S::Item>, Vec<S::Item>);
-    type Future = Box<dyn Future<Item = Self::Output, Error = S::Error>>;
 
-    fn consume(self, stream: S) -> Self::Future {
+    fn consume<F: Fn(&S::Item) -> Self + 'static>(f: F, stream: S) -> Box<dyn Future<Item = Self::Output, Error = S::Error>> {
         Box::new(stream.fold((Vec::new(), Vec::new()), move |(mut l, mut r), item| {
-            match self(&item) {
+            match f(&item) {
                 true => l.push(item),
                 false => r.push(item),
             }
@@ -39,6 +59,30 @@ where
     }
 }
 
+macro_rules! impl_for_int {
+    ($($typ:ty),*) => {
+        $(
+            impl<S> GroupByPredicateFunctionOutput<S> for $typ
+            where
+                S: Stream + 'static,
+                S::Item: 'static,
+                S::Error: 'static,
+            {
+                type Output = HashMap<$typ, Vec<S::Item>>;
+
+                fn consume<F: Fn(&S::Item) -> Self + 'static>(f: F, stream: S) -> Box<dyn Future<Item = Self::Output, Error = S::Error>> {
+                    Box::new(stream.fold(HashMap::new(), move |mut map: Self::Output, item| {
+                        let key = f(&item);
+                        map.entry(key).or_default().push(item);
+                        Ok(map)
+                    }))
+                }
+            }
+        )*
+    }
+}
+
+impl_for_int!(u8, i8, u16, i16, u32, i32, u64, i64, u128, i128, usize, isize);
 
 #[cfg(test)]
 mod test {
@@ -46,12 +90,32 @@ mod test {
     use crate::group_by::GroupBy;
 
     #[test]
-    fn test() {
+    fn test_condition() {
         let a = vec![0, -1, 1, -2, 2, -3, 3];
         let stream = IterSource::new(a);
         let (l, r) = stream.group_by(|&i: &i32| i < 0).now_or_never().unwrap();
         assert_eq!(vec![-1, -2, -3], l);
         assert_eq!(vec![0, 1, 2, 3], r);
+    }
+
+    #[test]
+    fn test_int() {
+        #[derive(Debug, Clone, Copy, PartialEq)]
+        struct Foo { i: i32, foo: &'static str }
+        let a = Foo { i: 0, foo: "a" };
+        let b = Foo { i: 0, foo: "b" };
+        let c = Foo { i: 1, foo: "c" };
+        let d = Foo { i: 2, foo: "d" };
+        let e = Foo { i: 0, foo: "e" };
+        let f = Foo { i: 2, foo: "f" };
+        let g = Foo { i: 0, foo: "g" };
+        let vec = vec![a, b, c, d, e, f, g];
+        let stream = IterSource::new(vec);
+        let mut map = stream.group_by(|foo: &Foo| foo.i).now_or_never().unwrap();
+        assert_eq!(vec![a, b, e, g], map.remove(&0).unwrap());
+        assert_eq!(vec![c], map.remove(&1).unwrap());
+        assert_eq!(vec![d, f], map.remove(&2).unwrap());
+        assert!(map.is_empty());
     }
 
     #[test]
