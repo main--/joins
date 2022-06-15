@@ -5,17 +5,16 @@ use proc_macro_error::abort;
 use quote::quote;
 use syn::{Data, DeriveInput, Fields, parse_macro_input};
 
-#[proc_macro_derive(GroupByPredicate)]
+#[proc_macro_derive(GroupByItem)]
 pub fn derive_group_by_predicate(input: TokenStream) -> TokenStream {
-    let DeriveInput { attrs: _, vis, ident, generics: _, data } = parse_macro_input!(input);
+    let DeriveInput { attrs: _, vis: _, ident, generics: _, data } = parse_macro_input!(input);
 
     let e = match data {
         Data::Enum(e) => e,
-        Data::Struct(_) => abort!(ident, "GroupByPredicate derive not supported for structs"),
-        Data::Union(_) => abort!(ident, "GroupByPredicate derive not supported for unions"),
+        Data::Struct(_) => abort!(ident, "GroupByItem derive not supported for structs"),
+        Data::Union(_) => abort!(ident, "GroupByItem derive not supported for unions"),
     };
 
-    let name = Ident::new(&format!("GroupBy{ident}Predicate"), ident.span());
     let variant_patterns: Vec<_> = e.variants.iter()
         .map(|variant| {
             let name = &variant.ident;
@@ -38,28 +37,13 @@ pub fn derive_group_by_predicate(input: TokenStream) -> TokenStream {
     let arg_names: Vec<_> = arg_names.iter().map(|name| Ident::new(name, Span::call_site())).collect();
 
     (quote! {
-        #vis struct #name<T, F: Fn(&T) -> &#ident> {
-            mapper: F,
-            _phantom: ::std::marker::PhantomData<fn(&T) -> &#ident>,
-        }
-        impl<T, F: Fn(&T) -> &#ident> #name<T, F> {
-            #vis fn new(mapper: F) -> #name<T, F> {
-                #name { mapper, _phantom: ::std::marker::PhantomData }
-            }
-        }
-        impl<'a, S, F> ::joins::group_by::GroupByPredicate<'a, S> for #name<S::Item, F>
-            where
-                S: ::joins::__private::Stream + 'a,
-                S::Item: 'a,
-                S::Error: 'a,
-                F: Fn(&S::Item) -> &#ident + 'a,
-        {
+        impl<'a, S: ::joins::__private::Stream + 'a> ::joins::group_by::GroupByItem<'a, S> for #ident {
             type Output = (#(#vec_types,)*);
             type Future = ::std::boxed::Box<dyn ::joins::__private::Future<Item = Self::Output, Error = S::Error> + 'a>;
 
-            fn consume(self, stream: S) -> Self::Future {
+            fn consume<P: ::joins::group_by::GroupByPredicate<'a, S, Self> + 'a>(mut predicate: P, stream: S) -> Self::Future {
                 ::std::boxed::Box::new(stream.fold((#(#vec_inits,)*), move |(#(mut #arg_names,)*), item| {
-                    match (self.mapper)(&item) {
+                    match predicate.extract(&item) {
                         #(
                             #variant_patterns => #arg_names.push(item),
                         )*

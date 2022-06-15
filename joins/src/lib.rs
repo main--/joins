@@ -13,7 +13,7 @@ pub use join::*;
 pub use predicate::*;
 pub use in_memory::*;
 #[cfg(feature = "derive")]
-pub use joins_derive::GroupByPredicate;
+pub use joins_derive::GroupByItem;
 
 /// reexports for joins-derive
 #[doc(hidden)]
