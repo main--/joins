@@ -1,54 +1,54 @@
 use futures::{Future, Stream};
 use std::collections::HashMap;
 
-pub trait GroupBy: Stream + Sized {
-    fn group_by<P: GroupByPredicate<Self>>(self, predicate: P) -> P::Future {
+pub trait GroupBy<'a>: Stream + Sized + 'a {
+    fn group_by<P: GroupByPredicate<'a, Self>>(self, predicate: P) -> P::Future {
         predicate.consume(self)
     }
 }
 
-impl<S: Stream + Sized> GroupBy for S {}
+impl<'a, S: Stream + Sized + 'a> GroupBy<'a> for S {}
 
 // TODO: GroupBy in-memory lazy returning (Iter<…>, …)
 // TODO: GroupBy on streams
 
-pub trait GroupByPredicate<S: Stream> {
+pub trait GroupByPredicate<'a, S: Stream + 'a> {
     type Output;
-    type Future: Future<Item = Self::Output, Error = S::Error>;
+    type Future: Future<Item = Self::Output, Error = S::Error> + 'a;
 
     fn consume(self, stream: S) -> Self::Future;
 }
 
-pub trait GroupByPredicateFunctionOutput<S: Stream> {
+pub trait GroupByPredicateFunctionOutput<'a, S: Stream + 'a> {
     type Output;
-    fn consume<F: Fn(&S::Item) -> Self + 'static>(f: F, stream: S) -> Box<dyn Future<Item = Self::Output, Error = S::Error>>;
+    fn consume<F: Fn(&S::Item) -> Self + 'a>(f: F, stream: S) -> Box<dyn Future<Item = Self::Output, Error = S::Error> + 'a>;
 }
 
-impl<S, F, O> GroupByPredicate<S> for F
-    where
-        S: Stream + 'static,
-        S::Item: 'static,
-        S::Error: 'static,
-        F: Fn(&S::Item) -> O + 'static,
-        O: GroupByPredicateFunctionOutput<S>,
+impl<'a, S, F, O> GroupByPredicate<'a, S> for F
+where
+    S: Stream + 'a,
+    S::Item: 'a,
+    S::Error: 'a,
+    F: Fn(&S::Item) -> O + 'a,
+    O: GroupByPredicateFunctionOutput<'a, S> + 'a,
 {
     type Output = O::Output;
-    type Future = Box<dyn Future<Item = Self::Output, Error = S::Error>>;
+    type Future = Box<dyn Future<Item = Self::Output, Error = S::Error> + 'a>;
 
     fn consume(self, stream: S) -> Self::Future {
         O::consume(self, stream)
     }
 }
 
-impl<S> GroupByPredicateFunctionOutput<S> for bool
+impl<'a, S> GroupByPredicateFunctionOutput<'a, S> for bool
 where
-    S: Stream + 'static,
-    S::Item: 'static,
-    S::Error: 'static,
+    S: Stream + 'a,
+    S::Item: 'a,
+    S::Error: 'a,
 {
     type Output = (Vec<S::Item>, Vec<S::Item>);
 
-    fn consume<F: Fn(&S::Item) -> Self + 'static>(f: F, stream: S) -> Box<dyn Future<Item = Self::Output, Error = S::Error>> {
+    fn consume<F: Fn(&S::Item) -> Self + 'a>(f: F, stream: S) -> Box<dyn Future<Item = Self::Output, Error = S::Error> + 'a> {
         Box::new(stream.fold((Vec::new(), Vec::new()), move |(mut l, mut r), item| {
             match f(&item) {
                 true => l.push(item),
@@ -62,15 +62,15 @@ where
 macro_rules! impl_for_int {
     ($($typ:ty),*) => {
         $(
-            impl<S> GroupByPredicateFunctionOutput<S> for $typ
+            impl<'a, S> GroupByPredicateFunctionOutput<'a, S> for $typ
             where
-                S: Stream + 'static,
-                S::Item: 'static,
-                S::Error: 'static,
+                S: Stream + 'a,
+                S::Item: 'a,
+                S::Error: 'a,
             {
                 type Output = HashMap<$typ, Vec<S::Item>>;
 
-                fn consume<F: Fn(&S::Item) -> Self + 'static>(f: F, stream: S) -> Box<dyn Future<Item = Self::Output, Error = S::Error>> {
+                fn consume<F: Fn(&S::Item) -> Self + 'a>(f: F, stream: S) -> Box<dyn Future<Item = Self::Output, Error = S::Error> + 'a> {
                     Box::new(stream.fold(HashMap::new(), move |mut map: Self::Output, item| {
                         let key = f(&item);
                         map.entry(key).or_default().push(item);
@@ -136,6 +136,22 @@ mod test {
         let f = Foo { i: 5, kind: Kind::C };
         let g = Foo { i: 6, kind: Kind::A };
         let vec = vec![a.clone(), b.clone(), c.clone(), d.clone(), e.clone(), f.clone(), g.clone() ];
+
+        // borrowed
+        let stream = IterSource::new(&vec);
+        let (veca, vecb, vecc) = stream.group_by(GroupByKindPredicate::new(|foo: &&Foo| &foo.kind)).now_or_never().unwrap();
+        assert_eq!(vec![&a, &b, &e, &g], veca);
+        assert_eq!(vec![&c], vecb);
+        assert_eq!(vec![&d, &f], vecc);
+
+        // borrow-cloned
+        let stream = IterSource::new(vec.iter().cloned());
+        let (veca, vecb, vecc) = stream.group_by(GroupByKindPredicate::new(|foo: &Foo| &foo.kind)).now_or_never().unwrap();
+        assert_eq!(vec![a.clone(), b.clone(), e.clone(), g.clone()], veca);
+        assert_eq!(vec![c.clone()], vecb);
+        assert_eq!(vec![d.clone(), f.clone()], vecc);
+
+        // owned
         let stream = IterSource::new(vec);
         let (veca, vecb, vecc) = stream.group_by(GroupByKindPredicate::new(|foo: &Foo| &foo.kind)).now_or_never().unwrap();
         assert_eq!(vec![a, b, e, g], veca);

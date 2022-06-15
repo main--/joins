@@ -47,15 +47,15 @@ pub fn derive_group_by_predicate(input: TokenStream) -> TokenStream {
                 #name { mapper, _phantom: ::std::marker::PhantomData }
             }
         }
-        impl<S, F> ::joins::group_by::GroupByPredicate<S> for #name<S::Item, F>
+        impl<'a, S, F> ::joins::group_by::GroupByPredicate<'a, S> for #name<S::Item, F>
             where
-                S: ::joins::__private::Stream + 'static,
-                S::Item: 'static,
-                S::Error: 'static,
-                F: Fn(&S::Item) -> &#ident + 'static,
+                S: ::joins::__private::Stream + 'a,
+                S::Item: 'a,
+                S::Error: 'a,
+                F: Fn(&S::Item) -> &#ident + 'a,
         {
             type Output = (#(#vec_types,)*);
-            type Future = ::std::boxed::Box<dyn ::joins::__private::Future<Item = Self::Output, Error = S::Error>>;
+            type Future = ::std::boxed::Box<dyn ::joins::__private::Future<Item = Self::Output, Error = S::Error> + 'a>;
 
             fn consume(self, stream: S) -> Self::Future {
                 ::std::boxed::Box::new(stream.fold((#(#vec_inits,)*), move |(#(mut #arg_names,)*), item| {
