@@ -9,26 +9,28 @@ use multimap::MultiMap;
 use crate::InnerJoinPredicate;
 
 use super::{Join, ExternalStorage, External};
-use crate::predicate::{JoinPredicate, HashPredicate};
+use crate::predicate::HashPredicate;
 
 #[derive(NamedType)]
 pub enum XJoin<L, R, D, E>
-    where
-        L: Stream,
-        R: Stream,
-        D: HashPredicate + InnerJoinPredicate,
-        E: ExternalStorage<Timestamped<L::Item>> + ExternalStorage<Timestamped<R::Item>> {
+where
+    L: Stream,
+    R: Stream<Error=L::Error>,
+    D: HashPredicate<Left=L::Item, Right=R::Item> + InnerJoinPredicate,
+    E: ExternalStorage<Timestamped<L::Item>> + ExternalStorage<Timestamped<R::Item>>
+{
     MainPhase(MainPhase<L, R, D, E>),
     CleanupPhase(CleanupPhase<L, R, D, E>),
     Tmp,
 }
 
 pub struct MainPhase<L, R, D, E>
-    where
-        L: Stream,
-        R: Stream,
-        D: HashPredicate + InnerJoinPredicate,
-        E: ExternalStorage<Timestamped<L::Item>> + ExternalStorage<Timestamped<R::Item>> {
+where
+    L: Stream,
+    R: Stream<Error=L::Error>,
+    D: HashPredicate<Left=L::Item, Right=R::Item> + InnerJoinPredicate,
+    E: ExternalStorage<Timestamped<L::Item>> + ExternalStorage<Timestamped<R::Item>>
+{
     definition: D,
     storage: E,
     left: stream::Fuse<L>,
@@ -113,11 +115,12 @@ fn stage2<T, U, O, E: ExternalStorage<Timestamped<T>> + ExternalStorage<Timestam
     }
 }
 impl<L, R, D, E> MainPhase<L, R, D, E>
-    where
-        L: Stream,
-        R: Stream<Error=L::Error>,
-        D: HashPredicate<Left=L::Item, Right=R::Item> + InnerJoinPredicate,
-        E: ExternalStorage<Timestamped<L::Item>> + ExternalStorage<Timestamped<R::Item>> {
+where
+    L: Stream,
+    R: Stream<Error=L::Error>,
+    D: HashPredicate<Left=L::Item, Right=R::Item> + InnerJoinPredicate,
+    E: ExternalStorage<Timestamped<L::Item>> + ExternalStorage<Timestamped<R::Item>>
+{
     fn manage_eviction(&mut self) {
         self.timer += 1; // TODO: is this necessary?
         
@@ -175,14 +178,20 @@ impl<L, R, D, E> MainPhase<L, R, D, E>
     }
 }
 
-type CleanupPhase<L: Stream, R: Stream, D: InnerJoinPredicate + JoinPredicate, E: ExternalStorage<Timestamped<L::Item>> + ExternalStorage<Timestamped<R::Item>>> = impl Iterator<Item=D::Output>;
+type CleanupPhase<
+    L: Stream,
+    R: Stream<Error=L::Error>,
+    D: HashPredicate<Left=L::Item, Right=R::Item> + InnerJoinPredicate,
+    E: ExternalStorage<Timestamped<L::Item>> + ExternalStorage<Timestamped<R::Item>>,
+> = impl Iterator<Item=D::Output>;
 
 impl<L, R, D, E> Stream for XJoin<L, R, D, E>
-    where
-        L: Stream,
-        R: Stream<Error=L::Error>,
-        D: HashPredicate<Left=L::Item, Right=R::Item> + InnerJoinPredicate,
-        E: ExternalStorage<Timestamped<L::Item>> + ExternalStorage<Timestamped<R::Item>> {
+where
+    L: Stream,
+    R: Stream<Error=L::Error>,
+    D: HashPredicate<Left=L::Item, Right=R::Item> + InnerJoinPredicate,
+    E: ExternalStorage<Timestamped<L::Item>> + ExternalStorage<Timestamped<R::Item>>
+{
     type Item = D::Output;
     type Error = L::Error;
 
@@ -257,10 +266,12 @@ impl<L, R, D, E> Stream for XJoin<L, R, D, E>
     }
 }
 impl<L, R, D, E> Join<L, R, D, E, usize> for XJoin<L, R, D, E>
-    where L: Stream,
-          R: Stream<Error=L::Error>,
-          E: ExternalStorage<Timestamped<L::Item>> + ExternalStorage<Timestamped<R::Item>>,
-          D: HashPredicate<Left=L::Item, Right=R::Item> + InnerJoinPredicate {
+where
+    L: Stream,
+    R: Stream<Error=L::Error>,
+    D: HashPredicate<Left=L::Item, Right=R::Item> + InnerJoinPredicate,
+    E: ExternalStorage<Timestamped<L::Item>> + ExternalStorage<Timestamped<R::Item>>
+{
     fn build(left: L, right: R, definition: D, storage: E, memory_limit: usize) -> Self {
         assert!(memory_limit >= 3);
         let num_partitions = memory_limit / 3; // TODO: is this good?
